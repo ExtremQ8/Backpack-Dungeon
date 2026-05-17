@@ -181,6 +181,12 @@
       font-weight: 750;
     }
 
+    #hudMod {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .coin-chip,
     .coin-inline {
       display: inline-flex;
@@ -269,19 +275,31 @@
       filter: brightness(1.15);
     }
 
-    #dashRing {
+    #combatControls {
       position: absolute;
       right: calc(16px + var(--safe-right));
       bottom: calc(18px + var(--safe-bottom));
       z-index: 5;
+      display: none;
+      align-items: end;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    #dashRing,
+    #shootBtn {
       width: 76px;
       height: 76px;
       border: 1px solid rgba(156,218,255,0.24);
       border-radius: 50%;
-      background: conic-gradient(var(--accent) 100%, rgba(255,255,255,0.12) 0);
       box-shadow: 0 14px 42px rgba(0,0,0,0.42), 0 0 26px rgba(56,215,255,0.18);
-      display: none;
       place-items: center;
+      position: relative;
+    }
+
+    #dashRing {
+      background: conic-gradient(var(--accent) 100%, rgba(255,255,255,0.12) 0);
+      display: grid;
       pointer-events: none;
     }
 
@@ -295,13 +313,54 @@
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
     }
 
-    #dashRing span {
+    #shootBtn {
+      display: grid;
+      pointer-events: auto;
+      background: radial-gradient(circle at 35% 25%, rgba(255,255,255,0.28), rgba(255,212,93,0.25) 42%, rgba(83,45,10,0.72));
+      color: var(--text);
+      font-weight: 900;
+      transition: transform 140ms var(--ease), filter 160ms var(--ease);
+    }
+
+    #shootBtn::before {
+      content: "";
+      position: absolute;
+      inset: 7px;
+      border-radius: inherit;
+      background: rgba(5,12,22,0.54);
+      border: 1px solid rgba(255,255,255,0.13);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+    }
+
+    #shootBtn:active {
+      transform: scale(0.94);
+      filter: brightness(1.16);
+    }
+
+    #shootBtn:disabled {
+      opacity: 0.5;
+      filter: saturate(0.4);
+    }
+
+    #dashRing span,
+    #shootBtn span {
       position: relative;
       z-index: 1;
       font-size: 11.5px;
       font-weight: 800;
       letter-spacing: 0;
       color: var(--text);
+    }
+
+    #shootBtn span::before {
+      content: "";
+      display: block;
+      width: 18px;
+      height: 5px;
+      margin: 0 auto 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #ffe6a0, #ffb33d);
+      box-shadow: 9px 0 0 -3px #2d1808;
     }
 
     #toast {
@@ -814,6 +873,50 @@
       .primary-button, .secondary-button, .danger-button { min-height: 44px; padding: 10px 12px; }
       .upgrade-card, .shop-card, .skin-card { min-height: 112px; padding: 12px; }
     }
+
+    @media (orientation: landscape) and (max-height: 520px) {
+      #hud {
+        padding: calc(6px + var(--safe-top)) calc(10px + var(--safe-right)) 4px calc(10px + var(--safe-left));
+      }
+
+      .hud-card {
+        padding: 8px 10px;
+        border-radius: 18px;
+      }
+
+      .hp-track {
+        height: 10px;
+        margin-top: 5px;
+      }
+
+      .pause-button {
+        width: 46px;
+        height: 46px;
+        border-radius: 16px;
+      }
+
+      #combatControls {
+        right: calc(10px + var(--safe-right));
+        bottom: calc(10px + var(--safe-bottom));
+        gap: 10px;
+      }
+
+      #dashRing,
+      #shootBtn {
+        width: 64px;
+        height: 64px;
+      }
+
+      #dashRing span,
+      #shootBtn span {
+        font-size: 10px;
+      }
+
+      .screen {
+        width: min(92vw, 760px);
+        max-height: calc(100dvh - 14px - var(--safe-top) - var(--safe-bottom));
+      }
+    }
   </style>
 </head>
 <body>
@@ -843,7 +946,10 @@
       </div>
     </div>
 
-    <div id="dashRing"><span>DASH</span></div>
+    <div id="combatControls">
+      <button id="shootBtn" aria-label="Shoot"><span>SHOOT</span></button>
+      <div id="dashRing"><span>DASH</span></div>
+    </div>
     <div id="toast"></div>
     <div id="overlay" role="dialog" aria-live="polite"></div>
   </div>
@@ -870,7 +976,9 @@
     const ctx = canvas.getContext('2d', { alpha: false });
     const overlay = document.getElementById('overlay');
     const hud = document.getElementById('hud');
+    const combatControls = document.getElementById('combatControls');
     const dashRing = document.getElementById('dashRing');
+    const shootBtn = document.getElementById('shootBtn');
     const toastEl = document.getElementById('toast');
 
     const hudEls = {
@@ -924,6 +1032,9 @@
       { id: 'ruler', name: 'Broken Ruler', icon: '━', rarity: 'rare', desc: 'Melee attacks become wider.', apply: g => { g.player.attackRange += 16; g.player.cleave = true; } },
       { id: 'dash', name: 'Energy Drink', icon: '⚡', rarity: 'rare', desc: 'Dash cooldown reduced.', apply: g => { g.player.dashCooldownBase = Math.max(0.75, g.player.dashCooldownBase * 0.82); } },
       { id: 'projectile', name: 'Mechanical Pencil', icon: '•', rarity: 'rare', desc: 'Attacks fire a small pencil shot.', apply: g => { g.player.projectileEnabled = true; g.player.projectileCount = Math.min(4, g.player.projectileCount + 1); } },
+      { id: 'quickDraw', name: 'Quick Draw Pencil', icon: '>>', rarity: 'rare', desc: 'Shoot cooldown is shorter.', apply: g => { g.player.shootCooldownBase = Math.max(0.24, g.player.shootCooldownBase * 0.78); } },
+      { id: 'pierceShot', name: 'Piercing Pencil', icon: '->', rarity: 'rare', desc: 'Shots pierce one extra enemy.', apply: g => { g.player.projectilePierce = Math.min(4, g.player.projectilePierce + 1); } },
+      { id: 'ricochet', name: 'Ricochet Homework', icon: '<>', rarity: 'rare', desc: 'Shots bounce off one wall.', apply: g => { g.player.projectileBounce = Math.min(3, g.player.projectileBounce + 1); } },
       { id: 'cheat', name: 'Cheat Sheet', icon: '?', rarity: 'rare', desc: 'Room rewards are slightly better.', apply: g => { g.player.rewardBonus += 0.12; } },
       { id: 'magnet', name: 'Coin Magnet', icon: '◎', rarity: 'rare', desc: 'Coins drift toward you.', apply: g => { g.player.coinMagnet += 80; } },
       { id: 'quiet', name: 'Quiet Kid', icon: '…', rarity: 'rare', desc: 'Enemies hesitate at long range.', apply: g => { g.player.quiet += 0.12; } },
@@ -933,7 +1044,9 @@
       { id: 'notebook', name: 'Infinite Notebook', icon: '□', rarity: 'legendary', desc: 'Future upgrade rooms offer four choices.', apply: g => { g.player.extraChoices = true; } },
       { id: 'goldPack', name: 'Golden Backpack', icon: '$', rarity: 'legendary', desc: 'Coins are worth more each room.', apply: g => { g.player.goldenBackpack = true; g.player.coinMultiplier += 0.2; } },
       { id: 'bell', name: 'Final Bell', icon: '◉', rarity: 'legendary', desc: 'A periodic shockwave damages nearby enemies.', apply: g => { g.player.shockwave = true; } },
-      { id: 'hallPass', name: 'Hall Pass', icon: '↣', rarity: 'legendary', desc: 'Dash leaves a damaging trail.', apply: g => { g.player.dashTrail = true; } }
+      { id: 'hallPass', name: 'Hall Pass', icon: '↣', rarity: 'legendary', desc: 'Dash leaves a damaging trail.', apply: g => { g.player.dashTrail = true; } },
+      { id: 'splitGraphite', name: 'Split Graphite', icon: 'Y', rarity: 'legendary', desc: 'Shoot fires two extra pencils.', apply: g => { g.player.projectileEnabled = true; g.player.projectileCount = Math.min(5, g.player.projectileCount + 2); } },
+      { id: 'eraserGuidance', name: 'Eraser Guidance', icon: '@', rarity: 'legendary', desc: 'Shots gently curve toward enemies.', apply: g => { g.player.projectileHoming = true; } }
     ];
 
     const game = {
@@ -1069,6 +1182,7 @@
         critChance: p.critChance,
         dashCooldownBase: p.dashCooldownBase,
         dashPower: p.dashPower,
+        shootCooldownBase: p.shootCooldownBase,
         blockStrength: p.blockStrength,
         attackRange: p.attackRange,
         knockback: p.knockback,
@@ -1076,6 +1190,9 @@
         lifeSteal: p.lifeSteal,
         projectileEnabled: p.projectileEnabled,
         projectileCount: p.projectileCount,
+        projectilePierce: p.projectilePierce,
+        projectileBounce: p.projectileBounce,
+        projectileHoming: p.projectileHoming,
         cleave: p.cleave,
         examMode: p.examMode,
         extraChoices: p.extraChoices,
@@ -1097,7 +1214,12 @@
       p.vx = 0;
       p.vy = 0;
       p.attackCooldown = 0;
+      p.shootCooldown = 0;
       p.dashCooldown = Math.min(p.dashCooldown || 0, p.dashCooldownBase || 1.5);
+      p.shootCooldownBase = p.shootCooldownBase || 0.5;
+      p.projectilePierce = p.projectilePierce || 0;
+      p.projectileBounce = p.projectileBounce || 0;
+      p.projectileHoming = !!p.projectileHoming;
       p.dashTime = 0;
       p.invuln = 0;
       p.blocking = false;
@@ -1124,6 +1246,8 @@
         dashCooldownBase: 1.55,
         dashPower: 520,
         dashTime: 0,
+        shootCooldown: 0,
+        shootCooldownBase: 0.52,
         blockStrength: 0.52,
         attackRange: 86,
         attackCooldown: 0,
@@ -1133,6 +1257,9 @@
         lifeSteal: 0,
         projectileEnabled: false,
         projectileCount: 0,
+        projectilePierce: 0,
+        projectileBounce: 0,
+        projectileHoming: false,
         cleave: false,
         examMode: false,
         extraChoices: false,
@@ -1205,8 +1332,12 @@
       return entries[entries.length - 1].value;
     }
 
+    function themeForRoom(roomNumber) {
+      return themes[Math.floor((roomNumber - 1) / 20) % themes.length];
+    }
+
     function currentTheme() {
-      return themes[Math.floor((game.roomNumber - 1) / 20) % themes.length];
+      return themeForRoom(game.roomNumber);
     }
 
     function difficultyFor(roomNumber) {
@@ -1224,17 +1355,22 @@
     function resize() {
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = Math.max(320, Math.floor(window.innerWidth));
-      const h = Math.max(440, Math.floor(window.innerHeight));
+      const h = Math.max(300, Math.floor(window.innerHeight));
+      const landscape = w > h;
       game.view.w = w;
       game.view.h = h;
       game.view.dpr = dpr;
       canvas.width = Math.floor(w * dpr);
       canvas.height = Math.floor(h * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      game.bounds.left = 18;
-      game.bounds.right = w - 18;
-      game.bounds.top = Math.max(74, Math.round(62 + Math.min(22, w * 0.02)));
-      game.bounds.bottom = h - Math.max(74, Math.round(64 + Math.min(18, w * 0.02)));
+      game.bounds.left = landscape ? 22 : 18;
+      game.bounds.right = w - (landscape && h < 520 ? 96 : 18);
+      game.bounds.top = landscape ? Math.max(58, Math.round(44 + Math.min(18, h * 0.03))) : Math.max(74, Math.round(62 + Math.min(22, w * 0.02)));
+      game.bounds.bottom = h - (landscape ? Math.max(20, Math.round(18 + Math.min(14, h * 0.02))) : Math.max(74, Math.round(64 + Math.min(18, w * 0.02))));
+      if (game.bounds.bottom - game.bounds.top < 190) {
+        game.bounds.top = Math.max(48, game.bounds.top - 14);
+        game.bounds.bottom = Math.min(h - 16, game.bounds.bottom + 18);
+      }
       if (game.player) {
         game.player.x = clamp(game.player.x, game.bounds.left + game.player.radius, game.bounds.right - game.player.radius);
         game.player.y = clamp(game.player.y, game.bounds.top + game.player.radius, game.bounds.bottom - game.player.radius);
@@ -1246,6 +1382,7 @@
       game.state = state;
       const gameplayVisible = state === STATES.PLAYING || state === STATES.PAUSE || state === STATES.UPGRADE_CHOICE || state === STATES.SHOP || state === STATES.GAME_OVER;
       hud.style.display = gameplayVisible && game.player ? 'block' : 'none';
+      combatControls.style.display = state === STATES.PLAYING && game.player ? 'flex' : 'none';
       dashRing.style.display = state === STATES.PLAYING && game.player ? 'grid' : 'none';
       if (state === STATES.PLAYING) {
         overlay.classList.remove('visible');
@@ -1379,18 +1516,9 @@
 
     function generateRoom(roomNumber, runSeed) {
       const rng = mulberry32((runSeed + roomNumber * 99991) >>> 0);
-      const theme = currentTheme();
+      const theme = themeForRoom(roomNumber);
       const diff = difficultyFor(roomNumber);
-      let type = 'normal';
-      if (roomNumber % 10 === 0) {
-        type = 'boss';
-      } else if (roomNumber > 3) {
-        const roll = rng();
-        if (roomNumber % 7 === 0 || roll < 0.09) type = 'shop';
-        else if (roll < 0.19) type = 'treasure';
-        else if (roll < 0.37) type = 'trap';
-        else if (roll < 0.44) type = 'chaos';
-      }
+      let type = roomTypeForRoom(roomNumber, rng);
 
       let modifier = null;
       if (type !== 'shop' && type !== 'treasure' && roomNumber > 2) {
@@ -1415,7 +1543,7 @@
         },
         cleared: false,
         spawnedBonus: false,
-        nextPreview: ''
+        nextPreview: previewRoom(roomNumber + 1)
       };
 
       const obstacleBase = type === 'boss' ? 2 : type === 'treasure' ? 1 : randInt(rng, 2, 4);
@@ -1443,6 +1571,26 @@
       }
 
       return room;
+    }
+
+    function roomTypeForRoom(roomNumber, rng) {
+      if (roomNumber % 10 === 0) return 'boss';
+      let type = 'normal';
+      if (roomNumber > 3) {
+        const roll = rng();
+        if (roomNumber % 7 === 0 || roll < 0.09) type = 'shop';
+        else if (roll < 0.19) type = 'treasure';
+        else if (roll < 0.37) type = 'trap';
+        else if (roll < 0.44) type = 'chaos';
+      }
+      return type;
+    }
+
+    function previewRoom(roomNumber) {
+      const rng = mulberry32((game.runSeed + roomNumber * 99991) >>> 0);
+      const type = roomTypeForRoom(roomNumber, rng);
+      const theme = themeForRoom(roomNumber);
+      return `${capitalize(type)} Room • ${theme.name}`;
     }
 
     function makeObstacle(rng, index) {
@@ -1629,6 +1777,7 @@
     function updatePlayer(dt) {
       const p = game.player;
       p.attackCooldown = Math.max(0, p.attackCooldown - dt);
+      p.shootCooldown = Math.max(0, p.shootCooldown - dt);
       p.dashCooldown = Math.max(0, p.dashCooldown - dt);
       p.invuln = Math.max(0, p.invuln - dt);
       p.slowTimer = Math.max(0, p.slowTimer - dt);
@@ -1889,13 +2038,16 @@
         x, y,
         vx: dx / len * speed,
         vy: dy / len * speed,
+        speed,
         damage,
         friendly,
         r: radius,
         color,
         kind: kind || 'dot',
         life: 2.7,
-        pierce: friendly && game.player.cleave ? 1 : 0
+        pierce: friendly ? Math.max(game.player.cleave ? 1 : 0, game.player.projectilePierce || 0) : 0,
+        bounce: friendly ? (game.player.projectileBounce || 0) : 0,
+        homing: friendly && !!game.player.projectileHoming
       });
       if (game.projectiles.length > 80) game.projectiles.splice(0, game.projectiles.length - 80);
     }
@@ -1905,9 +2057,22 @@
       for (let i = game.projectiles.length - 1; i >= 0; i--) {
         const pr = game.projectiles[i];
         pr.life -= dt;
+        if (pr.homing) steerProjectileTowardEnemy(pr, dt);
         pr.x += pr.vx * dt;
         pr.y += pr.vy * dt;
         let remove = pr.life <= 0 || pr.x < b.left - 30 || pr.x > b.right + 30 || pr.y < b.top - 30 || pr.y > b.bottom + 30;
+        if (!remove && pr.friendly && pr.bounce > 0) {
+          let bounced = false;
+          if (pr.x < b.left + pr.r) { pr.x = b.left + pr.r; pr.vx = Math.abs(pr.vx); bounced = true; }
+          if (pr.x > b.right - pr.r) { pr.x = b.right - pr.r; pr.vx = -Math.abs(pr.vx); bounced = true; }
+          if (pr.y < b.top + pr.r) { pr.y = b.top + pr.r; pr.vy = Math.abs(pr.vy); bounced = true; }
+          if (pr.y > b.bottom - pr.r) { pr.y = b.bottom - pr.r; pr.vy = -Math.abs(pr.vy); bounced = true; }
+          if (bounced) {
+            pr.bounce -= 1;
+            pr.life = Math.max(pr.life, 0.7);
+            addBurst(pr.x, pr.y, 4, pr.color);
+          }
+        }
         if (!remove) {
           for (const ob of game.room.obstacles) {
             if (circleRect(pr.x, pr.y, pr.r, ob)) {
@@ -1931,6 +2096,31 @@
         }
         if (remove) game.projectiles.splice(i, 1);
       }
+    }
+
+    function steerProjectileTowardEnemy(pr, dt) {
+      let best = null;
+      let bestScore = Infinity;
+      for (const e of game.room.enemies) {
+        const dx = e.x - pr.x;
+        const dy = e.y - pr.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 260 || d < 1) continue;
+        const dot = (dx * pr.vx + dy * pr.vy) / (d * Math.max(1, Math.hypot(pr.vx, pr.vy)));
+        if (dot < -0.15) continue;
+        const score = d * (1.35 - dot);
+        if (score < bestScore) {
+          bestScore = score;
+          best = { dx, dy, d };
+        }
+      }
+      if (!best) return;
+      const speed = Math.max(1, pr.speed || Math.hypot(pr.vx, pr.vy));
+      const tx = best.dx / best.d * speed;
+      const ty = best.dy / best.d * speed;
+      const turn = clamp(dt * 4.2, 0, 0.14);
+      pr.vx += (tx - pr.vx) * turn;
+      pr.vy += (ty - pr.vy) * turn;
     }
 
     function updateCoins(dt) {
@@ -2105,6 +2295,68 @@
       addSlash(p.x + p.facingX * 28, p.y + p.facingY * 28, Math.atan2(p.facingY, p.facingX), p.attackRange * 0.58, crit ? '#ffcf4a' : '#c6f4ff', p.cleave);
       addBurst(target.x, target.y, crit ? 15 : 8, crit ? '#ffcf4a' : '#c6f4ff');
       beep('hit');
+    }
+
+    function shootPlayerProjectile(targetX, targetY) {
+      const p = game.player;
+      if (!p || game.state !== STATES.PLAYING || p.shootCooldown > 0) return false;
+      let dx = 0;
+      let dy = 0;
+      if (Number.isFinite(targetX) && Number.isFinite(targetY)) {
+        dx = targetX - p.x;
+        dy = targetY - p.y;
+      } else {
+        const target = findShootAssistTarget();
+        if (target) {
+          dx = target.x - p.x;
+          dy = target.y - p.y;
+        } else {
+          dx = game.input.dirX || p.facingX || 1;
+          dy = game.input.dirY || p.facingY || 0;
+        }
+      }
+      const len = Math.max(1, Math.hypot(dx, dy));
+      dx /= len;
+      dy /= len;
+      p.facingX = dx;
+      p.facingY = dy;
+      p.shootCooldown = p.shootCooldownBase;
+      const count = p.projectileEnabled ? Math.max(1, p.projectileCount) : 1;
+      const baseDamage = Math.max(2, Math.round(p.damage * (p.projectileEnabled ? 0.62 : 0.48)));
+      for (let i = 0; i < count; i++) {
+        const spread = (i - (count - 1) / 2) * (p.projectileEnabled ? 0.15 : 0);
+        const a = Math.atan2(dy, dx) + spread;
+        shootProjectile(p.x + Math.cos(a) * 20, p.y + Math.sin(a) * 20, Math.cos(a), Math.sin(a), baseDamage, true, 360, '#ffd45d', 4.5, 'pencil');
+      }
+      addSlash(p.x + dx * 20, p.y + dy * 20, Math.atan2(dy, dx), 18, '#ffd45d', false);
+      addBurst(p.x + dx * 16, p.y + dy * 16, 5, '#ffd45d');
+      game.view.shake = Math.max(game.view.shake, 1.5);
+      beep('hit');
+      return true;
+    }
+
+    function findShootAssistTarget() {
+      const p = game.player;
+      if (!game.room || !game.room.enemies.length) return null;
+      const aimX = game.input.dirX || p.facingX || 1;
+      const aimY = game.input.dirY || p.facingY || 0;
+      const hasManualAim = Math.hypot(game.input.dirX, game.input.dirY) > 0.1;
+      let best = null;
+      let bestScore = Infinity;
+      for (const e of game.room.enemies) {
+        const dx = e.x - p.x;
+        const dy = e.y - p.y;
+        const d = Math.max(1, Math.hypot(dx, dy));
+        if (d > 540) continue;
+        const dot = (dx / d) * aimX + (dy / d) * aimY;
+        if (hasManualAim && dot < 0.42) continue;
+        const score = hasManualAim ? d * (1.22 - dot) : d;
+        if (score < bestScore) {
+          bestScore = score;
+          best = e;
+        }
+      }
+      return best;
     }
 
     function hitEnemy(e, damage, x, y, kx, ky, special) {
@@ -2316,6 +2568,9 @@
         ruler: 'Wider melee',
         dash: 'Dash cooldown down',
         projectile: 'Pencil shots',
+        quickDraw: 'Shoot cooldown down',
+        pierceShot: 'Piercing shots',
+        ricochet: 'Wall bounce',
         cheat: 'Rewards up',
         magnet: 'Magnet range up',
         quiet: 'Stealth up',
@@ -2325,7 +2580,9 @@
         notebook: '4 choices',
         goldPack: 'Coin scaling',
         bell: 'Auto shockwave',
-        hallPass: 'Dash trail'
+        hallPass: 'Dash trail',
+        splitGraphite: 'More shots',
+        eraserGuidance: 'Soft homing'
       };
       return map[upgrade.id] || upgrade.rarity;
     }
@@ -2526,7 +2783,7 @@
             </div>
             <button id="deleteBtn" class="danger-button">Delete Save</button>
           </div>
-          <p class="footer-note">Swipe to move. Tap enemies to attack. Double tap to dash. Hold to block.</p>
+          <p class="footer-note">Swipe to move. Tap enemies to attack. Shoot and Dash buttons sit under your thumb.</p>
         </section>
       `);
       if (hasContinue) document.getElementById('continueBtn').addEventListener('click', continueRun);
@@ -2665,7 +2922,7 @@
             </div>
             <div class="stat-card">
               <h3>Controls</h3>
-              <p class="card-desc">Mobile: swipe move, tap attack/pick up, double tap dash, hold block. Desktop: WASD/arrows move, Space attack, Shift dash, B block, Esc pause.</p>
+              <p class="card-desc">Mobile: swipe move, tap enemies to attack, Shoot button fires a pencil shot, Dash button or double tap dashes, hold block. Desktop: WASD/arrows move, Space attack, F/E shoot, Shift dash, B block, Esc pause.</p>
             </div>
             <button id="resetSettingsSave" class="danger-button">Reset Save</button>
           </div>
@@ -2946,6 +3203,13 @@
         ctx.beginPath();
         ctx.arc(ex.w * 0.5, ex.h * 0.5, 26 + pulse * 8, 0, Math.PI * 2);
         ctx.stroke();
+        ctx.font = '800 10px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#f5fbff';
+        ctx.shadowColor = hexToRgba(theme.accent, 0.65);
+        ctx.shadowBlur = 8;
+        ctx.fillText('ENTER', ex.w * 0.5, -8);
+        ctx.shadowBlur = 0;
       } else {
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
         roundRect(ctx, 8, 12, 10, ex.h - 24, 5);
@@ -3515,7 +3779,7 @@
       game.view.hpShown += (hpTarget - game.view.hpShown) * 0.16;
       if (Math.abs(game.view.hpShown - hpTarget) < 0.003) game.view.hpShown = hpTarget;
       hudEls.hpFill.style.width = clamp(game.view.hpShown * 100, 0, 100) + '%';
-      const modText = game.room.modifier ? game.room.modifier.name : capitalize(game.room.type) + ' Room';
+      const modText = game.room.cleared && game.room.exit.open ? 'Door Open • Next: ' + game.room.nextPreview : game.room.modifier ? game.room.modifier.name : capitalize(game.room.type) + ' Room';
       hudEls.mod.textContent = game.quizTimer > 0 ? modText + ' ' + Math.ceil(game.quizTimer) + 's' : modText;
 
       const boss = game.room.enemies.find(e => e.boss);
@@ -3534,6 +3798,9 @@
         const pct = ready ? 100 : (1 - p.dashCooldown / p.dashCooldownBase) * 100;
         dashRing.style.background = `conic-gradient(${ready ? '#32d5ff' : '#31516b'} ${pct}%, rgba(255,255,255,0.12) 0)`;
         dashRing.querySelector('span').textContent = ready ? 'DASH' : Math.ceil(p.dashCooldown * 10) / 10 + 's';
+        const shootReady = p.shootCooldown <= 0;
+        shootBtn.disabled = !shootReady;
+        shootBtn.querySelector('span').textContent = shootReady ? 'SHOOT' : Math.ceil(p.shootCooldown * 10) / 10 + 's';
       }
     }
 
@@ -3547,6 +3814,12 @@
 
     function setupInput() {
       document.getElementById('pauseBtn').addEventListener('click', showPause);
+      shootBtn.addEventListener('pointerdown', e => {
+        if (game.state !== STATES.PLAYING) return;
+        e.preventDefault();
+        startAudio();
+        shootPlayerProjectile();
+      }, { passive: false });
       window.addEventListener('keydown', e => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Spacebar'].includes(e.key)) e.preventDefault();
         if (e.key === 'Escape') {
@@ -3560,6 +3833,7 @@
           const target = nearestEnemyInRange(game.player.attackRange + 18);
           if (target) performAttack(target);
         }
+        if (game.state === STATES.PLAYING && (key === 'f' || key === 'e') && !e.repeat) shootPlayerProjectile();
         if (game.state === STATES.PLAYING && (key === 'Shift' || key === 'shift') && !e.repeat) dash();
         if (key === 'b') game.input.block = true;
       }, { passive: false });
