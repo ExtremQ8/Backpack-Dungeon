@@ -284,6 +284,7 @@
       align-items: end;
       gap: 12px;
       pointer-events: none;
+      touch-action: none;
     }
 
     #dashRing,
@@ -316,6 +317,7 @@
     #shootBtn {
       display: grid;
       pointer-events: auto;
+      touch-action: none;
       background: radial-gradient(circle at 35% 25%, rgba(255,255,255,0.28), rgba(255,212,93,0.25) 42%, rgba(83,45,10,0.72));
       color: var(--text);
       font-weight: 900;
@@ -337,7 +339,7 @@
       filter: brightness(1.16);
     }
 
-    #shootBtn:disabled {
+    #shootBtn.cooling {
       opacity: 0.5;
       filter: saturate(0.4);
     }
@@ -959,17 +961,19 @@
     'use strict';
 
     const STORAGE_KEY = 'backpackDungeonSave.v1';
-    const SAVE_VERSION = 1;
+    const SAVE_VERSION = 2;
     const STATES = {
       MENU: 'MENU',
       PLAYING: 'PLAYING',
       UPGRADE_CHOICE: 'UPGRADE_CHOICE',
+      ROUTE_CHOICE: 'ROUTE_CHOICE',
       SHOP: 'SHOP',
       PAUSE: 'PAUSE',
       GAME_OVER: 'GAME_OVER',
       SKINS: 'SKINS',
       STATS: 'STATS',
-      SETTINGS: 'SETTINGS'
+      SETTINGS: 'SETTINGS',
+      TUTORIAL: 'TUTORIAL'
     };
 
     const canvas = document.getElementById('game');
@@ -1003,13 +1007,21 @@
     ];
 
     const roomModifiers = [
-      { id: 'dark', name: 'Dark Room', desc: 'Reduced vision.' },
-      { id: 'exam', name: 'Exam Room', desc: 'Enemies move faster.' },
+      { id: 'dark', name: 'Lights Out', desc: 'Reduced vision. Rare loot is more likely.', rewardMult: 1.15 },
+      { id: 'exam', name: 'Exam Room', desc: 'Enemies move faster.', speedMult: 1.16, rewardMult: 1.12 },
       { id: 'messy', name: 'Messy Backpack', desc: 'Extra obstacles.' },
       { id: 'noisy', name: 'Noisy Class', desc: 'Random chalk flies through.' },
       { id: 'quiz', name: 'Pop Quiz', desc: 'Clear quickly for bonus coins.' },
       { id: 'gluefloor', name: 'Glue Floor', desc: 'Movement is heavier.' },
-      { id: 'notebook', name: 'Open Notebook', desc: 'Extra paper-plane hazards.' }
+      { id: 'notebook', name: 'Open Notebook', desc: 'Extra paper-plane hazards.' },
+      { id: 'fireDrill', name: 'Fire Drill', desc: 'Fast enemies, richer drops.', speedMult: 1.24, rewardMult: 1.35 },
+      { id: 'paperStorm', name: 'Paper Storm', desc: 'Paper planes cross the room in waves.', rewardMult: 1.2 },
+      { id: 'patrol', name: 'Teacher Patrol', desc: 'An invincible shadow sweeps the hall.', rewardMult: 1.25 },
+      { id: 'silence', name: 'Exam Silence', desc: 'No dash, doubled rewards.', rewardMult: 2 },
+      { id: 'cafeteria', name: 'Cafeteria Spill', desc: 'The floor is slippery.', rewardMult: 1.15 },
+      { id: 'substitute', name: 'Substitute Teacher', desc: 'Enemy movement gets weird.', rewardMult: 1.18 },
+      { id: 'group', name: 'Group Project', desc: 'Extra enemies arrive together.', extraEnemies: 2, rewardMult: 1.25 },
+      { id: 'surprise', name: 'Surprise Test', desc: 'A hall monitor joins the room.', extraEnemies: 1, rewardMult: 1.45 }
     ];
 
     const skins = [
@@ -1019,6 +1031,17 @@
       { id: 'cafeteria', name: 'Cafeteria Warrior', unlock: 'Defeat 100 enemies', colors: ['#ff9b4f', '#4a2611', '#ffe1c2'] },
       { id: 'wizard', name: 'Sleep-Deprived Wizard', unlock: 'Die 10 times', colors: ['#9e82ff', '#251d4a', '#e8e0ff'] },
       { id: 'golden', name: 'Golden Backpack', unlock: 'Collect 1000 coins, reach room 100, or defeat 10 bosses', colors: ['#ffd94c', '#4a3710', '#fff7bd'] }
+    ];
+
+    const achievements = [
+      { id: 'room20', name: 'Still Not Paying Attention', test: () => game.save.permanent.bestRoom >= 20 },
+      { id: 'room50', name: 'Deep Backpack Theory', test: () => game.save.permanent.bestRoom >= 50 },
+      { id: 'room100', name: 'Academic Weapon', test: () => game.save.permanent.bestRoom >= 100 },
+      { id: 'boss10', name: "Teacher's Nightmare", test: () => game.save.permanent.bossesDefeated >= 10 },
+      { id: 'noHit', name: 'Untouchable', test: () => game.save.permanent.noHitRooms >= 1 },
+      { id: 'combo8', name: 'Locked In', test: () => game.save.permanent.bestCombo >= 8 },
+      { id: 'synergy', name: 'Backpack Theorycraft', test: () => game.save.permanent.synergiesUnlocked.length >= 1 },
+      { id: 'objectives', name: 'Extra Credit', test: () => game.save.permanent.objectivesCompleted >= 5 }
     ];
 
     const upgrades = [
@@ -1060,7 +1083,11 @@
       runStats: null,
       choices: [],
       shopOffers: [],
+      routeChoices: [],
+      nextRoute: null,
       selectedSkin: 'default',
+      runMode: 'normal',
+      dailyKey: '',
       roomGrace: 0,
       view: { w: 1, h: 1, dpr: 1, shake: 0, shakeX: 0, shakeY: 0, hpShown: 1, roomFlash: 0 },
       bounds: { left: 18, top: 80, right: 300, bottom: 500 },
@@ -1072,12 +1099,15 @@
         touchDirY: 0,
         pointerDown: false,
         pointerId: null,
+        shootPointerId: null,
         startX: 0,
         startY: 0,
         lastX: 0,
         lastY: 0,
         startTime: 0,
         lastTap: 0,
+        shooting: false,
+        shootKey: false,
         block: false,
         holdTimer: 0
       },
@@ -1104,7 +1134,15 @@
         unlockedSkins: ['default'],
         selectedSkin: 'default',
         achievements: [],
-        settings: { muted: true, reducedMotion: false }
+        synergiesUnlocked: [],
+        bestScore: 0,
+        bestCombo: 0,
+        noHitRooms: 0,
+        objectivesCompleted: 0,
+        tutorialSeen: false,
+        daily: {},
+        modeBests: {},
+        settings: defaultSettings()
       };
     }
 
@@ -1122,13 +1160,25 @@
       save.version = SAVE_VERSION;
       save.activeRun = Object.assign({ exists: false }, raw.activeRun || {});
       save.permanent = Object.assign(defaultPermanent(), raw.permanent || {});
-      save.permanent.settings = Object.assign({ muted: true, reducedMotion: false }, save.permanent.settings || {});
+      save.permanent.settings = Object.assign(defaultSettings(), save.permanent.settings || {});
       if (!Array.isArray(save.permanent.unlockedSkins)) save.permanent.unlockedSkins = ['default'];
       if (!save.permanent.unlockedSkins.includes('default')) save.permanent.unlockedSkins.unshift('default');
       if (!Array.isArray(save.permanent.achievements)) save.permanent.achievements = [];
+      if (!save.permanent.daily || typeof save.permanent.daily !== 'object') save.permanent.daily = {};
+      if (!save.permanent.modeBests || typeof save.permanent.modeBests !== 'object') save.permanent.modeBests = {};
+      save.permanent.bestScore = Number(save.permanent.bestScore || 0);
+      save.permanent.bestCombo = Number(save.permanent.bestCombo || 0);
+      save.permanent.noHitRooms = Number(save.permanent.noHitRooms || 0);
+      save.permanent.objectivesCompleted = Number(save.permanent.objectivesCompleted || 0);
+      save.permanent.synergiesUnlocked = Array.isArray(save.permanent.synergiesUnlocked) ? save.permanent.synergiesUnlocked : [];
+      save.permanent.tutorialSeen = !!save.permanent.tutorialSeen;
       if (!skins.some(s => s.id === save.permanent.selectedSkin)) save.permanent.selectedSkin = 'default';
       if (!save.activeRun || !save.activeRun.exists) save.activeRun = { exists: false };
       return save;
+    }
+
+    function defaultSettings() {
+      return { muted: true, reducedMotion: false, vibration: true, debug: false };
     }
 
     function loadSave() {
@@ -1149,10 +1199,15 @@
           exists: true,
           runSeed: game.runSeed,
           roomNumber: game.roomNumber,
+          runMode: game.runMode,
+          dailyKey: game.dailyKey,
           pendingUpgrade: game.state === STATES.UPGRADE_CHOICE,
+          pendingRouteChoice: game.state === STATES.ROUTE_CHOICE,
           awaitingDoor: game.state === STATES.PLAYING && game.room && game.room.cleared && game.room.exit.open,
           player: snapshotPlayer(),
           upgrades: game.player.upgrades.slice(),
+          routeChoices: game.routeChoices.slice(),
+          currentRoutePlan: game.room ? game.room.routePlan || null : null,
           currentTheme: currentTheme().name,
           currentRoomType: game.room ? game.room.type : 'normal',
           runStats: Object.assign({}, game.runStats)
@@ -1202,6 +1257,20 @@
         quiet: p.quiet,
         rewardBonus: p.rewardBonus,
         bossWeakens: p.bossWeakens,
+        score: p.score,
+        combo: p.combo,
+        bestCombo: p.bestCombo,
+        roomHitsTaken: p.roomHitsTaken,
+        blessings: p.blessings.slice(),
+        curses: p.curses.slice(),
+        synergies: p.synergies.slice(),
+        richAura: p.richAura,
+        blockShockwave: p.blockShockwave,
+        dashShockwave: p.dashShockwave,
+        untouchable: p.untouchable,
+        perfectScore: p.perfectScore,
+        speedBurstTimer: p.speedBurstTimer,
+        firstHitShield: p.firstHitShield,
         upgrades: p.upgrades.slice()
       };
     }
@@ -1220,6 +1289,20 @@
       p.projectilePierce = p.projectilePierce || 0;
       p.projectileBounce = p.projectileBounce || 0;
       p.projectileHoming = !!p.projectileHoming;
+      p.score = Number(p.score || 0);
+      p.combo = Number(p.combo || 0);
+      p.bestCombo = Number(p.bestCombo || 0);
+      p.roomHitsTaken = Number(p.roomHitsTaken || 0);
+      p.blessings = Array.isArray(p.blessings) ? p.blessings : [];
+      p.curses = Array.isArray(p.curses) ? p.curses : [];
+      p.synergies = Array.isArray(p.synergies) ? p.synergies : [];
+      p.richAura = !!p.richAura;
+      p.blockShockwave = !!p.blockShockwave;
+      p.dashShockwave = !!p.dashShockwave;
+      p.untouchable = !!p.untouchable;
+      p.perfectScore = !!p.perfectScore;
+      p.speedBurstTimer = Number(p.speedBurstTimer || 0);
+      p.firstHitShield = !!p.firstHitShield;
       p.dashTime = 0;
       p.invuln = 0;
       p.blocking = false;
@@ -1270,6 +1353,20 @@
         quiet: 0,
         rewardBonus: 0,
         bossWeakens: 0,
+        score: 0,
+        combo: 0,
+        bestCombo: 0,
+        roomHitsTaken: 0,
+        blessings: [],
+        curses: [],
+        synergies: [],
+        richAura: false,
+        blockShockwave: false,
+        dashShockwave: false,
+        untouchable: false,
+        perfectScore: false,
+        speedBurstTimer: 0,
+        firstHitShield: false,
         slowTimer: 0,
         invuln: 0,
         blocking: false,
@@ -1287,8 +1384,15 @@
         enemiesDefeated: 0,
         bossesDefeated: 0,
         upgradesCollected: 0,
+        objectivesCompleted: 0,
+        noHitRooms: 0,
+        score: 0,
+        bestCombo: 0,
         roomCoins: 0,
-        roomEnemies: 0
+        roomEnemies: 0,
+        roomScore: 0,
+        roomStart: 0,
+        roomHits: 0
       };
     }
 
@@ -1341,15 +1445,69 @@
     }
 
     function difficultyFor(roomNumber) {
+      const curseSpeed = game.player && hasStatus('curse', 'haste');
+      const chaos = game.runMode === 'chaos';
+      const routeHard = game.nextRoute && game.nextRoute.hard;
+      const difficultyBoost = (curseSpeed ? 0.18 : 0) + (chaos ? 0.12 : 0) + (routeHard ? 0.22 : 0);
       return {
         enemyCount: roomNumber === 1 ? 1 : Math.min(12, 2 + Math.floor(roomNumber / 4)),
         eliteChance: Math.min(0.45, roomNumber * 0.005),
-        hpMultiplier: 1 + roomNumber * 0.08,
-        damageMultiplier: 1 + roomNumber * 0.035,
-        speedMultiplier: 1 + Math.min(1.5, roomNumber * 0.008),
-        trapCount: Math.min(10, Math.floor(roomNumber / 5) + 1),
+        hpMultiplier: 1 + roomNumber * 0.065 + difficultyBoost,
+        damageMultiplier: 1 + roomNumber * 0.031 + difficultyBoost * 0.6,
+        speedMultiplier: 1 + Math.min(1.5, roomNumber * 0.008) + difficultyBoost * 0.45,
+        trapCount: Math.min(10, Math.floor(roomNumber / 5) + 1 + (hasStatus('curse', 'traps') ? 2 : 0)),
         reward: 3 + Math.floor(roomNumber / 5)
       };
+    }
+
+    function todayKey() {
+      const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    function seedFromText(text) {
+      let h = 2166136261;
+      for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    function hasStatus(kind, id) {
+      const p = game.player;
+      if (!p) return false;
+      const list = kind === 'blessing' ? p.blessings : p.curses;
+      return list.some(s => s.id === id && s.rooms > 0);
+    }
+
+    function addStatus(kind, id, name, rooms, desc) {
+      const p = game.player;
+      if (!p) return;
+      const list = kind === 'blessing' ? p.blessings : p.curses;
+      const existing = list.find(s => s.id === id);
+      if (existing) existing.rooms = Math.max(existing.rooms, rooms);
+      else list.push({ id, name, rooms, desc: desc || '' });
+      showToast((kind === 'blessing' ? 'Blessing: ' : 'Curse: ') + name);
+    }
+
+    function tickStatuses() {
+      const p = game.player;
+      if (!p) return;
+      p.blessings.forEach(s => { s.rooms -= 1; });
+      p.curses.forEach(s => { s.rooms -= 1; });
+      p.blessings = p.blessings.filter(s => s.rooms > 0);
+      p.curses = p.curses.filter(s => s.rooms > 0);
+      if (hasStatus('blessing', 'shield')) p.firstHitShield = true;
+    }
+
+    function activeRewardMultiplier() {
+      let mult = 1;
+      if (hasStatus('blessing', 'coins')) mult += 0.2;
+      if (game.room && game.room.routePlan && game.room.routePlan.rewardMult) mult *= game.room.routePlan.rewardMult;
+      if (game.room && game.room.modifier && game.room.modifier.rewardMult) mult *= game.room.modifier.rewardMult;
+      if (game.runMode === 'chaos') mult *= 1.18;
+      return mult;
     }
 
     function resize() {
@@ -1387,6 +1545,10 @@
       if (state === STATES.PLAYING) {
         overlay.classList.remove('visible');
         overlay.innerHTML = '';
+      } else {
+        game.input.shooting = false;
+        game.input.shootPointerId = null;
+        game.input.shootKey = false;
       }
       updateHud();
     }
@@ -1441,18 +1603,35 @@
       } catch (err) {}
     }
 
-    function newRun() {
+    function haptic(ms) {
+      if (!game.save || !game.save.permanent.settings.vibration) return;
+      if (navigator.vibrate) {
+        try { navigator.vibrate(ms || 10); } catch (err) {}
+      }
+    }
+
+    function newRun(mode) {
+      if (mode && typeof mode !== 'string') mode = 'normal';
+      mode = mode || 'normal';
       resize();
-      game.runSeed = (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+      game.runMode = mode;
+      game.dailyKey = mode === 'daily' ? todayKey() : '';
+      game.runSeed = mode === 'daily' ? seedFromText('daily-detention-' + game.dailyKey) : (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
       game.roomNumber = 1;
       game.player = createPlayer();
       game.runStats = createRunStats();
+      game.routeChoices = [];
+      game.nextRoute = null;
+      if (mode === 'chaos') {
+        addStatus('curse', 'haste', 'Chaos Bell', 999, 'Every hallway is louder.');
+        addStatus('blessing', 'coins', 'Loose Change', 999, 'More coins drop in the mess.');
+      }
       game.save.permanent.totalRuns += 1;
       game.save.activeRun = { exists: true };
       generateCurrentRoom();
       saveGame();
       setState(STATES.PLAYING);
-      showToast('Class starts. The backpack opens.');
+      showToast(mode === 'daily' ? 'Daily Detention begins.' : mode === 'chaos' ? 'Chaos Backpack opens.' : 'Class starts. The backpack opens.');
     }
 
     function continueRun() {
@@ -1464,14 +1643,23 @@
       resize();
       game.runSeed = active.runSeed >>> 0;
       game.roomNumber = Math.max(1, active.roomNumber || 1);
+      game.runMode = active.runMode || 'normal';
+      game.dailyKey = active.dailyKey || '';
+      game.routeChoices = Array.isArray(active.routeChoices) ? active.routeChoices : [];
+      game.nextRoute = active.currentRoutePlan || null;
       game.player = restorePlayer(active.player);
       game.runStats = Object.assign(createRunStats(), active.runStats || {});
       generateCurrentRoom();
+      game.nextRoute = null;
       if (active.pendingUpgrade) {
         game.room.cleared = true;
         game.room.exit.open = true;
         showUpgradeChoice();
         showToast('Upgrade choice resumed.');
+      } else if (active.pendingRouteChoice) {
+        setState(STATES.ROUTE_CHOICE);
+        showRouteChoice(true);
+        showToast('Door choice resumed.');
       } else if (active.awaitingDoor) {
         game.room.cleared = true;
         game.room.exit.open = true;
@@ -1494,9 +1682,14 @@
       game.roomGrace = game.roomNumber <= 3 ? 2.2 : 0.8;
       game.clearDelay = -1;
       game.room = generateRoom(game.roomNumber, game.runSeed);
+      game.runStats.roomStart = performance.now();
+      game.runStats.roomHits = 0;
+      game.runStats.roomScore = 0;
       game.quizTimer = game.room.modifier && game.room.modifier.id === 'quiz' ? clamp(18 - Math.floor(game.roomNumber / 18), 8, 18) : 0;
       if (game.player) {
         game.view.hpShown = clamp(game.player.hp / game.player.maxHp, 0, 1);
+        game.player.roomHitsTaken = 0;
+        if (hasStatus('blessing', 'shield')) game.player.firstHitShield = true;
         game.player.x = game.bounds.left + 46;
         game.player.y = (game.bounds.top + game.bounds.bottom) / 2;
         game.player.vx = 0;
@@ -1512,28 +1705,34 @@
         game.clearDelay = -1;
         showToast('Treasure room. Take what you want, then enter the door.');
       }
+      if (game.room.modifier && game.room.type !== 'treasure' && game.room.type !== 'shop') announceRoomEvent(game.room.modifier);
+      if (game.room.objective) showToast(game.room.objective.name + ': ' + game.room.objective.desc);
     }
 
     function generateRoom(roomNumber, runSeed) {
       const rng = mulberry32((runSeed + roomNumber * 99991) >>> 0);
       const theme = themeForRoom(roomNumber);
       const diff = difficultyFor(roomNumber);
-      let type = roomTypeForRoom(roomNumber, rng);
+      const routePlan = game.nextRoute || null;
+      let type = routePlan && routePlan.forceType ? routePlan.forceType : roomTypeForRoom(roomNumber, rng);
 
       let modifier = null;
       if (type !== 'shop' && type !== 'treasure' && roomNumber > 2) {
-        const chanceMod = type === 'chaos' ? 0.95 : Math.min(0.36, 0.12 + roomNumber * 0.004);
+        const chanceMod = game.runMode === 'chaos' ? 0.98 : type === 'chaos' ? 0.95 : Math.min(0.42, 0.13 + roomNumber * 0.005);
         if (chance(rng, chanceMod)) modifier = pick(rng, roomModifiers);
       }
+      if (routePlan && routePlan.modifier) modifier = roomModifiers.find(m => m.id === routePlan.modifier) || modifier;
 
       const room = {
         type,
         theme,
         modifier,
+        routePlan,
         obstacles: [],
         enemies: [],
         traps: [],
         coins: [],
+        notes: [],
         exit: {
           x: game.bounds.right - 26,
           y: (game.bounds.top + game.bounds.bottom) / 2,
@@ -1543,6 +1742,10 @@
         },
         cleared: false,
         spawnedBonus: false,
+        clearAge: 0,
+        cleanupMagnet: 0,
+        age: 0,
+        objective: null,
         nextPreview: previewRoom(roomNumber + 1)
       };
 
@@ -1563,12 +1766,24 @@
       if (type === 'boss') {
         room.enemies.push(createEnemy('teacher', rng, diff, true));
       } else if (type !== 'shop' && type !== 'treasure') {
-        const count = type === 'chaos' ? Math.min(12, diff.enemyCount + 2) : diff.enemyCount;
+        const eventExtra = modifier && modifier.extraEnemies ? modifier.extraEnemies : 0;
+        const routeExtra = routePlan && routePlan.hard ? 2 : 0;
+        const count = type === 'chaos' ? Math.min(12, diff.enemyCount + 2 + eventExtra + routeExtra) : Math.min(12, diff.enemyCount + eventExtra + routeExtra);
         for (let i = 0; i < count; i++) {
           const enemyType = chooseEnemyType(rng, roomNumber, type);
           room.enemies.push(createEnemy(enemyType, rng, diff, false));
         }
       }
+      if (modifier && modifier.id === 'surprise' && type !== 'boss') {
+        const monitor = createEnemy('monitor', rng, diff, false);
+        monitor.elite = true;
+        monitor.variant = 'hallMonitor';
+        monitor.hp = Math.round(monitor.hp * 1.8);
+        monitor.maxHp = monitor.hp;
+        room.enemies.push(monitor);
+      }
+      room.objective = createObjective(rng, room);
+      if (room.objective && room.objective.id === 'notes') spawnObjectiveNotes(room, rng);
 
       return room;
     }
@@ -1578,10 +1793,11 @@
       let type = 'normal';
       if (roomNumber > 3) {
         const roll = rng();
-        if (roomNumber % 7 === 0 || roll < 0.09) type = 'shop';
-        else if (roll < 0.19) type = 'treasure';
+        const lowHp = game.player && game.player.hp / game.player.maxHp < 0.35;
+        if (roomNumber % 7 === 0 || roll < (lowHp ? 0.14 : 0.09)) type = 'shop';
+        else if (roll < (lowHp ? 0.26 : 0.19)) type = 'treasure';
         else if (roll < 0.37) type = 'trap';
-        else if (roll < 0.44) type = 'chaos';
+        else if (roll < (game.runMode === 'chaos' ? 0.62 : 0.46)) type = 'chaos';
       }
       return type;
     }
@@ -1591,6 +1807,46 @@
       const type = roomTypeForRoom(roomNumber, rng);
       const theme = themeForRoom(roomNumber);
       return `${capitalize(type)} Room • ${theme.name}`;
+    }
+
+    function createObjective(rng, room) {
+      if (game.roomNumber < 3 || room.type === 'shop' || room.type === 'treasure' || room.type === 'boss') return null;
+      if (!chance(rng, game.runMode === 'chaos' ? 0.72 : 0.45)) return null;
+      const options = [
+        { id: 'noHit', name: 'No-Hit Hallway', desc: 'Clear without taking damage.', reward: 7 + Math.floor(game.roomNumber / 5) },
+        { id: 'fast', name: 'Speed Quiz', desc: 'Clear before the timer fades.', limit: clamp(18 - Math.floor(game.roomNumber / 18), 9, 18), reward: 6 + Math.floor(game.roomNumber / 6) },
+        { id: 'notes', name: 'Lost Notes', desc: 'Collect all glowing notes.', needed: 4, reward: 6 + Math.floor(game.roomNumber / 7) },
+        { id: 'eliteFirst', name: 'Call On The Loudest', desc: 'Defeat an elite before the room ends.', reward: 9 + Math.floor(game.roomNumber / 6) }
+      ];
+      const objective = Object.assign({ done: false, failed: false, progress: 0 }, pick(rng, options));
+      if (objective.id === 'eliteFirst' && !room.enemies.some(e => e.elite || e.variant)) {
+        const target = room.enemies[0];
+        if (target) {
+          target.elite = true;
+          target.hp = Math.round(target.hp * 1.45);
+          target.maxHp = target.hp;
+        }
+      }
+      return objective;
+    }
+
+    function spawnObjectiveNotes(room, rng) {
+      const b = game.bounds;
+      const count = room.objective.needed || 4;
+      for (let i = 0; i < count; i++) {
+        room.notes.push({
+          x: randInt(rng, b.left + 70, b.right - 70),
+          y: randInt(rng, b.top + 58, b.bottom - 58),
+          r: 9,
+          collected: false,
+          pulse: rng() * Math.PI * 2
+        });
+      }
+    }
+
+    function announceRoomEvent(event) {
+      showToast(event.name + ': ' + event.desc);
+      addRing((game.bounds.left + game.bounds.right) / 2, (game.bounds.top + game.bounds.bottom) / 2, 88, currentTheme().accent2 || currentTheme().accent, 0.55);
     }
 
     function makeObstacle(rng, index) {
@@ -1646,7 +1902,8 @@
         { value: 'plane', weight: roomNumber > 2 ? 18 : 5 },
         { value: 'bot', weight: roomNumber > 5 ? 14 + roomNumber * 0.06 : 2 },
         { value: 'snake', weight: roomNumber > 8 ? 12 + roomNumber * 0.05 : 1 },
-        { value: 'glue', weight: roomNumber > 12 || roomType === 'trap' ? 11 : 1 }
+        { value: 'glue', weight: roomNumber > 12 || roomType === 'trap' ? 11 : 1 },
+        { value: 'monitor', weight: roomNumber > 14 ? 4 + roomNumber * 0.025 : 0 }
       ];
       return weightedPick(rng, entries);
     }
@@ -1666,6 +1923,7 @@
         bot: { name: 'Calculator Bot', hp: 14, damage: 5, speed: 60, r: 15, color: '#55e0d6' },
         snake: { name: 'Ruler Snake', hp: 16, damage: 7, speed: 96, r: 13, color: '#ffb84a' },
         glue: { name: 'Glue Blob', hp: 20, damage: 4, speed: 52, r: 16, color: '#77f0bd' },
+        monitor: { name: 'Hall Monitor', hp: 36, damage: 8, speed: 72, r: 20, color: '#ffd45d' },
         teacher: { name: 'Angry Teacher', hp: 96, damage: 9, speed: 58, r: 28, color: '#ff4d6d' }
       }[type];
       const elite = !isBoss && chance(rng, diff.eliteChance);
@@ -1689,8 +1947,14 @@
         phase: 1,
         summonCooldown: 6,
         lineCooldown: rng() * 1.8,
+        radialCooldown: 3 + rng() * 2.2,
+        telegraph: null,
+        variant: null,
+        armor: 0,
         slowTimer: 0
       };
+      if (isBoss) applyBossPersona(enemy);
+      assignEnemyVariant(enemy, rng);
       if (isBoss && game.player && game.player.bossWeakens > 0) {
         enemy.hp = Math.round(enemy.hp * 0.72);
         enemy.maxHp = enemy.hp;
@@ -1698,6 +1962,66 @@
         showToast("Principal's Pass weakened the boss.");
       }
       return enemy;
+    }
+
+    function applyBossPersona(enemy) {
+      const motif = currentTheme().motif;
+      const personas = {
+        pencil: ['Angry Teacher', '#ff4d6d'],
+        notebook: ['Principal Shadow', '#d086ff'],
+        calculator: ['Calculator Overlord', '#50f0d2'],
+        cafeteria: ['Cafeteria Monster', '#ff9b58'],
+        detention: ['Final Bell Entity', '#ffd45d']
+      };
+      const p = personas[motif] || personas.pencil;
+      enemy.name = p[0];
+      enemy.color = p[1];
+      if (motif === 'calculator') enemy.damage += 1;
+      if (motif === 'cafeteria') enemy.maxHp = enemy.hp = Math.round(enemy.hp * 1.12);
+      if (motif === 'detention') enemy.speed *= 1.12;
+    }
+
+    function assignEnemyVariant(enemy, rng) {
+      if (enemy.boss || game.roomNumber < 4) return;
+      const chanceBase = Math.min(0.28, 0.05 + game.roomNumber * 0.003) + (game.runMode === 'chaos' ? 0.08 : 0);
+      if (!chance(rng, chanceBase)) return;
+      if (enemy.type === 'plane' && chance(rng, 0.42)) {
+        enemy.variant = 'golden';
+        enemy.name = 'Golden Paper Plane';
+        enemy.color = '#ffd94c';
+        enemy.hp = Math.max(5, Math.round(enemy.hp * 0.75));
+        enemy.maxHp = enemy.hp;
+        return;
+      }
+      if ((enemy.type === 'slime' || enemy.type === 'glue') && chance(rng, 0.5)) {
+        enemy.variant = enemy.type === 'slime' ? 'splitter' : 'armored';
+        enemy.name = enemy.variant === 'splitter' ? 'Split Eraser Slime' : 'Armored Glue Blob';
+        enemy.armor = enemy.variant === 'armored' ? 2 : 0;
+        enemy.color = enemy.variant === 'splitter' ? '#d7a8ff' : '#a5ffd6';
+        enemy.hp = Math.round(enemy.hp * 1.22);
+        enemy.maxHp = enemy.hp;
+        return;
+      }
+      if (enemy.type === 'bot') {
+        enemy.variant = 'glitch';
+        enemy.name = 'Glitch Calculator';
+        enemy.color = '#8bf7ff';
+        enemy.hp = Math.round(enemy.hp * 1.18);
+        enemy.maxHp = enemy.hp;
+        return;
+      }
+      if (enemy.type === 'snake') {
+        enemy.variant = 'fire';
+        enemy.name = 'Fire Ruler Snake';
+        enemy.color = '#ff8a42';
+        return;
+      }
+      if (enemy.type === 'rat') {
+        enemy.variant = 'eliteRat';
+        enemy.name = 'Elite Pencil Rat';
+        enemy.elite = true;
+        enemy.color = '#ff4d6d';
+      }
     }
 
     function spawnTreasureCoins() {
@@ -1729,11 +2053,13 @@
       updateInputDirection();
       game.roomGrace = Math.max(0, game.roomGrace - dt);
       updatePlayer(dt);
+      if ((game.input.shooting || game.input.shootKey) && game.player.shootCooldown <= 0) shootPlayerProjectile();
       updateTraps(dt);
       updatePuddles(dt);
       updateEnemies(dt);
       updateProjectiles(dt);
       updateCoins(dt);
+      updateNotes(dt);
       updateParticles(dt);
       updateEffects(dt);
       updateNumbers(dt);
@@ -1781,6 +2107,7 @@
       p.dashCooldown = Math.max(0, p.dashCooldown - dt);
       p.invuln = Math.max(0, p.invuln - dt);
       p.slowTimer = Math.max(0, p.slowTimer - dt);
+      p.speedBurstTimer = Math.max(0, p.speedBurstTimer - dt);
 
       if (p.shockwave) {
         p.shockwaveTimer -= dt;
@@ -1791,7 +2118,9 @@
       }
 
       const glueFloor = game.room.modifier && game.room.modifier.id === 'gluefloor';
-      const slow = (p.slowTimer > 0 ? 0.62 : 1) * (glueFloor ? 0.82 : 1);
+      const spillFloor = game.room.modifier && game.room.modifier.id === 'cafeteria';
+      const speedBurst = p.speedBurstTimer > 0 ? 1.2 : 1;
+      const slow = (p.slowTimer > 0 ? 0.62 : 1) * (glueFloor ? 0.82 : 1) * speedBurst;
       const blockSlow = p.blocking ? 0.45 : 1;
       if (p.dashTime > 0) {
         p.dashTime -= dt;
@@ -1802,7 +2131,7 @@
         p.vy += game.input.dirY * accel * dt;
       }
 
-      const friction = p.dashTime > 0 ? 0.985 : Math.pow(0.001, dt);
+      const friction = p.dashTime > 0 ? 0.985 : Math.pow(spillFloor ? 0.09 : 0.001, dt);
       p.vx *= friction;
       p.vy *= friction;
       moveCircle(p, p.vx * dt, p.vy * dt, p.radius, true);
@@ -1866,19 +2195,31 @@
         const nx = dx / d;
         const ny = dy / d;
         const quietMul = p.quiet && d > 190 ? 1 - p.quiet : 1;
-        const modSpeed = game.room.modifier && game.room.modifier.id === 'exam' ? 1.16 : 1;
-        const speed = e.speed * quietMul * modSpeed * (e.slowTimer > 0 ? 0.55 : 1);
+        const eventSpeed = game.room.modifier && game.room.modifier.speedMult ? game.room.modifier.speedMult : 1;
+        const curseSpeed = hasStatus('curse', 'haste') ? 1.12 : 1;
+        const variantSpeed = e.variant === 'golden' ? 1.28 : e.variant === 'hallMonitor' ? 1.12 : 1;
+        const speed = e.speed * quietMul * eventSpeed * curseSpeed * variantSpeed * (e.slowTimer > 0 ? 0.55 : 1);
 
         if (e.boss) {
           updateBoss(e, dt, nx, ny, d);
-        } else if (e.type === 'rat' || e.type === 'slime' || e.type === 'glue') {
+        } else if (e.type === 'rat' || e.type === 'slime' || e.type === 'glue' || e.type === 'monitor') {
           e.vx += nx * speed * 4.2 * dt;
           e.vy += ny * speed * 4.2 * dt;
           if (e.type === 'glue' && e.cooldown <= 0) {
             e.cooldown = 1.45;
             addPuddle(e.x, e.y);
           }
+          if (e.type === 'monitor' && e.cooldown <= 0 && d < 340) {
+            e.cooldown = 2.2;
+            e.vx += nx * speed * 7.5;
+            e.vy += ny * speed * 7.5;
+            addRing(e.x, e.y, 28, '#ffd45d', 0.28);
+          }
         } else if (e.type === 'plane') {
+          if (e.variant === 'golden') {
+            e.vx -= nx * speed * 2.2 * dt;
+            e.vy -= ny * speed * 2.2 * dt;
+          }
           if (Math.abs(e.vx) + Math.abs(e.vy) < 10) {
             e.vx = (Math.random() > 0.5 ? 1 : -1) * speed;
             e.vy = (Math.random() - 0.5) * speed;
@@ -1889,7 +2230,11 @@
           e.vy += ny * speed * desired * 4.5 * dt;
           if (e.cooldown <= 0 && d < 390) {
             e.cooldown = Math.max(0.75, 1.85 - game.roomNumber * 0.01);
-            shootProjectile(e.x, e.y, nx, ny, e.damage, false, 190 + game.roomNumber * 1.2, '#58f0e0', 5, 'number');
+            const shots = e.variant === 'glitch' ? 3 : 1;
+            for (let s = 0; s < shots; s++) {
+              const a = Math.atan2(ny, nx) + (s - (shots - 1) / 2) * 0.22;
+              shootProjectile(e.x, e.y, Math.cos(a), Math.sin(a), e.damage, false, 190 + game.roomNumber * 1.2, '#58f0e0', 5, 'number');
+            }
           }
         } else if (e.type === 'snake') {
           e.lineCooldown -= dt;
@@ -1910,6 +2255,11 @@
         e.vy *= fr;
         moveCircle(e, e.vx * dt, e.vy * dt, e.r, e.type !== 'plane');
         if (e.type === 'plane') bounceHazard(e);
+        if (e.variant === 'fire' && Math.random() < dt * 2.2) addPuddle(e.x, e.y);
+        if (game.room.modifier && game.room.modifier.id === 'substitute' && Math.random() < dt * 0.75) {
+          e.vx += (Math.random() - 0.5) * speed * 0.8;
+          e.vy += (Math.random() - 0.5) * speed * 0.8;
+        }
 
         if (game.roomGrace <= 0 && d < e.r + p.radius && e.contactCooldown <= 0) {
           e.contactCooldown = game.roomNumber < 6 ? 1.0 : 0.72;
@@ -1925,17 +2275,23 @@
     function updateBoss(e, dt, nx, ny, d) {
       const room = game.roomNumber;
       e.phase = e.hp < e.maxHp * 0.48 ? 2 : 1;
+      const charging = updateEnemyTelegraph(e, dt);
       const chase = e.phase === 2 ? 1.25 : 1;
       e.vx += nx * e.speed * 3.4 * chase * dt;
       e.vy += ny * e.speed * 3.4 * chase * dt;
 
-      if (room >= 30 && e.cooldown <= 0) {
-        e.cooldown = Math.max(0.62, 1.45 - room * 0.004);
-        const spread = room >= 60 ? 3 : 1;
-        for (let i = 0; i < spread; i++) {
-          const ang = Math.atan2(ny, nx) + (i - (spread - 1) / 2) * 0.25;
-          shootProjectile(e.x, e.y, Math.cos(ang), Math.sin(ang), e.damage, false, 210 + room, '#ffec99', 6, 'chalk');
-        }
+      if (!charging && room >= 10 && e.cooldown <= 0) {
+        e.cooldown = Math.max(0.82, 1.78 - room * 0.004);
+        const spread = room >= 60 ? 3 : room >= 30 ? 2 : 1;
+        startEnemyTelegraph(e, {
+          type: 'chalkVolley',
+          duration: 0.58,
+          angle: Math.atan2(ny, nx),
+          spread,
+          damage: e.damage,
+          speed: 210 + room,
+          color: '#ffec99'
+        });
       }
 
       if (room >= 60) {
@@ -1953,31 +2309,127 @@
         }
       }
 
-      if (room >= 100 && e.phase === 2 && Math.random() < dt * 1.1) {
-        for (let i = 0; i < 8; i++) {
-          const a = i / 8 * Math.PI * 2 + performance.now() * 0.001;
-          shootProjectile(e.x, e.y, Math.cos(a), Math.sin(a), Math.ceil(e.damage * 0.7), false, 170, '#ff8faf', 4, 'chalk');
+      const motif = currentTheme().motif;
+      if (motif === 'cafeteria' && Math.random() < dt * 0.9) addPuddle(e.x + (Math.random() - 0.5) * 70, e.y + (Math.random() - 0.5) * 70);
+      if (motif === 'calculator' && e.phase === 2 && Math.random() < dt * 0.7) {
+        const a = Math.random() * Math.PI * 2;
+        shootProjectile(e.x, e.y, Math.cos(a), Math.sin(a), Math.ceil(e.damage * 0.75), false, 180, '#58f0e0', 5, 'number');
+      }
+      if (motif === 'detention' && e.phase === 2 && Math.random() < dt * 0.35) addRing(e.x, e.y, 64 + Math.random() * 42, '#ffd45d', 0.42);
+
+      if (room >= 100 && e.phase === 2) {
+        e.radialCooldown -= dt;
+        if (!charging && e.radialCooldown <= 0) {
+          e.radialCooldown = 2.6 + Math.random() * 1.7;
+          startEnemyTelegraph(e, {
+            type: 'chalkRing',
+            duration: 0.72,
+            angle: performance.now() * 0.001,
+            spread: 8,
+            damage: Math.ceil(e.damage * 0.7),
+            speed: 170,
+            color: '#ff8faf'
+          });
         }
       }
     }
 
+    function startEnemyTelegraph(e, data) {
+      e.telegraph = Object.assign({}, data, {
+        time: data.duration,
+        maxTime: data.duration,
+        originX: e.x,
+        originY: e.y
+      });
+      addRing(e.x, e.y, e.r + (data.type === 'chalkRing' ? 40 : 18), data.color, data.duration);
+    }
+
+    function updateEnemyTelegraph(e, dt) {
+      const t = e.telegraph;
+      if (!t) return false;
+      t.time -= dt;
+      t.originX = e.x;
+      t.originY = e.y;
+      if (t.time > 0) return true;
+      fireEnemyTelegraph(e, t);
+      e.telegraph = null;
+      return false;
+    }
+
+    function fireEnemyTelegraph(e, t) {
+      const shots = Math.max(1, t.spread || 1);
+      if (t.type === 'chalkRing') {
+        for (let i = 0; i < shots; i++) {
+          const a = t.angle + i / shots * Math.PI * 2;
+          shootProjectile(e.x, e.y, Math.cos(a), Math.sin(a), t.damage, false, t.speed, t.color, 4, 'chalk');
+        }
+        addBurst(e.x, e.y, 16, t.color);
+        return;
+      }
+      for (let i = 0; i < shots; i++) {
+        const a = t.angle + (i - (shots - 1) / 2) * 0.25;
+        shootProjectile(e.x, e.y, Math.cos(a), Math.sin(a), t.damage, false, t.speed, t.color, 6, 'chalk');
+      }
+      addBurst(e.x, e.y, 9, t.color);
+    }
+
     function killEnemy(index, e) {
       game.room.enemies.splice(index, 1);
-      const coinBase = e.boss ? 14 + Math.floor(game.roomNumber / 4) : (e.elite ? 4 : 2) + Math.floor(game.roomNumber / 15);
-      const value = Math.max(1, Math.floor(coinBase * game.player.coinMultiplier * (1 + game.player.rewardBonus)));
-      const drops = e.boss ? 9 : e.elite ? 3 : 1 + (Math.random() < 0.28 ? 1 : 0);
+      game.player.combo += 1;
+      game.player.bestCombo = Math.max(game.player.bestCombo, game.player.combo);
+      game.runStats.bestCombo = Math.max(game.runStats.bestCombo, game.player.bestCombo);
+      const comboMult = 1 + Math.min(1.2, Math.max(0, game.player.combo - 1) * 0.08);
+      const variantMult = e.variant === 'golden' ? 4 : e.variant ? 1.45 : 1;
+      const coinBase = e.boss ? 14 + Math.floor(game.roomNumber / 4) : ((e.elite ? 4 : 2) + Math.floor(game.roomNumber / 15)) * variantMult;
+      const value = Math.max(1, Math.floor(coinBase * game.player.coinMultiplier * (1 + game.player.rewardBonus) * activeRewardMultiplier() * comboMult));
+      const drops = e.boss ? 9 : e.variant === 'golden' ? 8 : e.elite ? 3 : 1 + (Math.random() < 0.28 ? 1 : 0);
       for (let j = 0; j < drops; j++) spawnCoin(e.x, e.y, Math.ceil(value / drops));
       addBurst(e.x, e.y, e.boss ? 26 : 10, e.color);
-      addNumber(e.x, e.y - 12, e.boss ? 'BOSS' : '+', e.boss ? '#ffcf4a' : '#fff');
+      addNumber(e.x, e.y - 12, e.boss ? 'BOSS' : game.player.combo >= 3 ? 'x' + game.player.combo : '+', e.boss ? '#ffcf4a' : '#fff');
+      addScore(e.boss ? 900 : e.elite || e.variant ? 220 : 90, e.boss ? 3 : 1);
       game.runStats.enemiesDefeated += 1;
       game.runStats.roomEnemies += 1;
       game.save.permanent.enemiesDefeated += 1;
+      if (game.room.objective && game.room.objective.id === 'eliteFirst' && (e.elite || e.variant) && !game.room.objective.failed) {
+        game.room.objective.done = true;
+        showToast('Objective complete: Loudest defeated.');
+      }
+      if (e.variant === 'splitter' && e.r > 10 && game.room.enemies.length < 12) splitEnemy(e);
       if (e.boss) {
         game.runStats.bossesDefeated += 1;
         game.save.permanent.bossesDefeated += 1;
+        addStatus('blessing', 'bossLuck', 'Teacher Tears', 3, 'Rare rewards are more common.');
       }
       beep(e.boss ? 'clear' : 'hit');
       checkUnlocks();
+      checkAchievements();
+    }
+
+    function splitEnemy(e) {
+      const rng = mulberry32((game.runSeed ^ Math.floor(e.x * 31 + e.y * 17) ^ game.room.enemies.length) >>> 0);
+      for (let i = 0; i < 2; i++) {
+        const child = createEnemy('slime', rng, difficultyFor(game.roomNumber), false);
+        child.variant = null;
+        child.name = 'Tiny Eraser Slime';
+        child.x = clamp(e.x + (i ? 18 : -18), game.bounds.left + child.r, game.bounds.right - child.r);
+        child.y = clamp(e.y + (Math.random() - 0.5) * 26, game.bounds.top + child.r, game.bounds.bottom - child.r);
+        child.r *= 0.72;
+        child.hp = Math.max(3, Math.round(e.maxHp * 0.22));
+        child.maxHp = child.hp;
+        child.damage = Math.max(1, Math.round(child.damage * 0.65));
+        game.room.enemies.push(child);
+      }
+      showToast('The slime split.');
+    }
+
+    function addScore(base, mult) {
+      const p = game.player;
+      const score = Math.max(1, Math.round(base * (mult || 1) * (1 + Math.min(2, p.combo * 0.06))));
+      p.score += score;
+      game.runStats.score += score;
+      game.runStats.roomScore += score;
+      game.save.permanent.bestScore = Math.max(game.save.permanent.bestScore, p.score);
+      game.save.permanent.bestCombo = Math.max(game.save.permanent.bestCombo, p.bestCombo);
     }
 
     function updateTraps(dt) {
@@ -2002,6 +2454,26 @@
       if (game.room.modifier && game.room.modifier.id === 'noisy' && Math.random() < dt * 0.9) {
         const y = game.bounds.top + 30 + Math.random() * (game.bounds.bottom - game.bounds.top - 60);
         shootProjectile(game.bounds.right - 20, y, -1, (Math.random() - 0.5) * 0.35, 4 + Math.floor(game.roomNumber / 18), false, 260, '#f7eaa7', 4, 'chalk');
+      }
+      if (game.room.modifier && game.room.modifier.id === 'paperStorm' && Math.random() < dt * 1.4) {
+        const fromLeft = Math.random() < 0.5;
+        const y = game.bounds.top + 28 + Math.random() * (game.bounds.bottom - game.bounds.top - 56);
+        shootProjectile(fromLeft ? game.bounds.left + 10 : game.bounds.right - 10, y, fromLeft ? 1 : -1, (Math.random() - 0.5) * 0.18, 5 + Math.floor(game.roomNumber / 22), false, 300, '#f8fbff', 5, 'pencil');
+      }
+      if (game.room.modifier && game.room.modifier.id === 'patrol') updatePatrol(dt);
+    }
+
+    function updatePatrol(dt) {
+      const room = game.room;
+      if (!room.patrol) room.patrol = { x: game.bounds.left - 90, y: game.bounds.top + 80 + Math.random() * Math.max(80, game.bounds.bottom - game.bounds.top - 160), vx: 145, w: 70, h: 118 };
+      const p = room.patrol;
+      p.x += p.vx * dt;
+      if (p.x > game.bounds.right + 110) {
+        p.x = game.bounds.left - 110;
+        p.y = game.bounds.top + 60 + Math.random() * Math.max(80, game.bounds.bottom - game.bounds.top - 120);
+      }
+      if (game.roomGrace <= 0 && Math.abs(game.player.x - p.x) < p.w * 0.5 + game.player.radius && Math.abs(game.player.y - p.y) < p.h * 0.5 + game.player.radius) {
+        damagePlayer(8 + Math.floor(game.roomNumber / 16), p.x, p.y);
       }
     }
 
@@ -2125,7 +2597,10 @@
 
     function updateCoins(dt) {
       const p = game.player;
-      const magnet = p.coinMagnet + 54;
+      const cleanupBoost = game.room.cleared ? 116 + Math.min(130, (game.room.cleanupMagnet || 0) * 28) : 0;
+      const magnet = p.coinMagnet + 54 + cleanupBoost;
+      const pullScale = game.room.cleared ? 1.42 : 1;
+      const collectPad = game.room.cleared ? 13 : 8;
       for (let i = game.room.coins.length - 1; i >= 0; i--) {
         const c = game.room.coins[i];
         c.life += dt;
@@ -2133,7 +2608,7 @@
         const dy = p.y - c.y;
         const d = Math.max(1, Math.hypot(dx, dy));
         if (d < magnet) {
-          const pull = (1 - d / magnet) * 680;
+          const pull = (1 - d / magnet) * 680 * pullScale;
           c.vx += dx / d * pull * dt;
           c.vy += dy / d * pull * dt;
         }
@@ -2143,7 +2618,7 @@
         c.y += c.vy * dt;
         c.x = clamp(c.x, game.bounds.left + c.r, game.bounds.right - c.r);
         c.y = clamp(c.y, game.bounds.top + c.r, game.bounds.bottom - c.r);
-        if (d < p.radius + c.r + 8) {
+        if (d < p.radius + c.r + collectPad) {
           collectCoin(i, c);
         }
       }
@@ -2157,15 +2632,60 @@
       game.save.permanent.totalCoins += coin.value;
       addNumber(coin.x, coin.y - 10, '+' + coin.value, '#ffdc58');
       addBurst(coin.x, coin.y, 5, '#ffdc58');
+      if (game.player.richAura) coinPulseDamage(coin.x, coin.y, coin.value);
       beep('coin');
       checkUnlocks();
     }
 
+    function coinPulseDamage(x, y, value) {
+      for (const e of game.room.enemies) {
+        const d = dist(x, y, e.x, e.y);
+        if (d < 82) {
+          e.hp -= Math.max(1, value * 0.35);
+          e.slowTimer = Math.max(e.slowTimer, 0.18);
+        }
+      }
+      if (Math.random() < 0.55) addRing(x, y, 42, '#ffd45d', 0.22);
+    }
+
+    function updateNotes(dt) {
+      const room = game.room;
+      if (!room || !room.notes || !room.notes.length) return;
+      for (const note of room.notes) {
+        if (note.collected) continue;
+        note.pulse += dt * 5;
+        if (dist(note.x, note.y, game.player.x, game.player.y) < note.r + game.player.radius + 8) {
+          note.collected = true;
+          if (room.objective && room.objective.id === 'notes') {
+            room.objective.progress += 1;
+            if (room.objective.progress >= (room.objective.needed || 4)) {
+              room.objective.done = true;
+              showToast('Objective complete: notes recovered.');
+            }
+          }
+          addBurst(note.x, note.y, 9, '#d7f2ff');
+          addNumber(note.x, note.y - 10, 'NOTE', '#d7f2ff');
+          beep('coin');
+        }
+      }
+    }
+
     function updateRoomState(dt) {
       const room = game.room;
+      room.age = (room.age || 0) + dt;
+      if (room.cleared) {
+        room.clearAge = (room.clearAge || 0) + dt;
+        room.cleanupMagnet = Math.max(0, (room.cleanupMagnet || 0) - dt);
+      }
+      if (room.objective && room.objective.id === 'fast' && !room.objective.done && !room.objective.failed && room.age > room.objective.limit) {
+        room.objective.failed = true;
+        showToast('Speed Quiz missed.');
+      }
       if (!room.cleared && room.enemies.length === 0 && room.type !== 'shop') {
         room.cleared = true;
         room.exit.open = true;
+        room.clearAge = 0;
+        room.cleanupMagnet = 4.2;
         game.runStats.roomsCleared += 1;
         if (game.quizTimer > 0) {
           const bonus = 5 + Math.floor(game.roomNumber / 8);
@@ -2174,15 +2694,29 @@
           game.save.permanent.totalCoins += bonus;
           showToast('Pop quiz bonus +' + bonus + ' coins');
         }
-        const reward = Math.max(1, Math.floor((difficultyFor(game.roomNumber).reward) * (1 + game.player.rewardBonus)));
+        resolveObjectiveReward(room);
+        if (game.runStats.roomHits === 0) {
+          const noHit = 4 + Math.floor(game.roomNumber / 7);
+          game.player.coins += noHit;
+          game.runStats.coinsCollected += noHit;
+          game.save.permanent.totalCoins += noHit;
+          game.runStats.noHitRooms += 1;
+          game.save.permanent.noHitRooms += 1;
+          addScore(180, 1);
+          showToast('No-hit bonus +' + noHit + ' coins');
+        }
+        const reward = Math.max(1, Math.floor((difficultyFor(game.roomNumber).reward) * (1 + game.player.rewardBonus) * activeRewardMultiplier()));
         for (let i = 0; i < Math.min(10, 2 + Math.floor(reward / 2)); i++) {
           spawnCoin(room.exit.x - 52 + Math.random() * 34, room.exit.y - 35 + Math.random() * 70, Math.ceil(reward / 4));
         }
+        addScore(260 + game.roomNumber * 18, game.player.combo >= 5 ? 1.4 : 1);
         addBurst(room.exit.x, room.exit.y, 18, currentTheme().accent);
         addRing((game.bounds.left + game.bounds.right) / 2, (game.bounds.top + game.bounds.bottom) / 2, Math.min(game.bounds.right - game.bounds.left, game.bounds.bottom - game.bounds.top) * 0.42, currentTheme().accent, 0.75);
         game.view.roomFlash = 1;
         beep('clear');
         showToast('Door opened. Grab the coins, then enter.');
+        haptic(14);
+        checkAchievements();
         saveGame();
         game.clearDelay = -1;
       }
@@ -2191,24 +2725,55 @@
 
       if (room.cleared && room.exit.open && game.state === STATES.PLAYING) {
         const ex = room.exit;
-        if (game.player.x > ex.x - 12 && Math.abs(game.player.y - ex.y) < ex.h / 2 + 8) {
+        if (room.clearAge > 0.22 && game.player.x > ex.x - 12 && Math.abs(game.player.y - ex.y) < ex.h / 2 + 8) {
           showUpgradeChoice();
         }
       }
     }
 
+    function resolveObjectiveReward(room) {
+      const obj = room.objective;
+      if (!obj) return;
+      if (obj.id === 'fast' && room.age <= obj.limit) obj.done = true;
+      if (obj.id === 'noHit' && game.runStats.roomHits === 0) obj.done = true;
+      if (!obj.done || obj.failed) return;
+      const bonus = Math.max(1, Math.floor(obj.reward * activeRewardMultiplier()));
+      game.player.coins += bonus;
+      game.runStats.coinsCollected += bonus;
+      game.save.permanent.totalCoins += bonus;
+      game.runStats.objectivesCompleted += 1;
+      game.save.permanent.objectivesCompleted += 1;
+      addScore(320, 1 + Math.min(1.2, game.player.combo * 0.04));
+      addStatus('blessing', pick(mulberry32((game.runSeed ^ game.roomNumber ^ bonus) >>> 0), ['coins', 'shield', 'dash']), obj.name + ' Prize', 3, 'Objective reward.');
+      showToast('Objective bonus +' + bonus + ' coins');
+    }
+
     function damagePlayer(amount, sourceX, sourceY) {
       const p = game.player;
       if (p.invuln > 0) return;
+      if (p.firstHitShield) {
+        p.firstHitShield = false;
+        addNumber(p.x, p.y - 24, 'SHIELD', '#8fc7ff');
+        addRing(p.x, p.y, 44, '#8fc7ff', 0.32);
+        p.invuln = 0.28;
+        beep('hit');
+        return;
+      }
       if (Math.random() < p.dodgeChance) {
         addNumber(p.x, p.y - 22, 'DODGE', '#b8f7ff');
         p.invuln = 0.18;
+        if (p.untouchable) p.speedBurstTimer = 1.25;
         return;
       }
       let dmg = amount;
       if (p.blocking) dmg *= (1 - p.blockStrength);
+      if (hasStatus('curse', 'frail')) dmg *= 1.12;
       dmg = Math.max(1, Math.round(dmg));
       p.hp -= dmg;
+      p.combo = 0;
+      p.roomHitsTaken += 1;
+      game.runStats.roomHits += 1;
+      if (game.room && game.room.objective && game.room.objective.id === 'noHit') game.room.objective.failed = true;
       p.invuln = p.blocking ? 0.34 : 0.62;
       const dx = p.x - sourceX;
       const dy = p.y - sourceY;
@@ -2218,6 +2783,8 @@
       game.view.shake = Math.max(game.view.shake, p.blocking ? 4 : 9);
       addNumber(p.x, p.y - 24, '-' + dmg, p.blocking ? '#8fc7ff' : '#ff6b82');
       addBurst(p.x, p.y, p.blocking ? 5 : 12, p.blocking ? '#8fc7ff' : '#ff4d6d');
+      if (p.blocking && p.blockShockwave) shockwave();
+      haptic(p.blocking ? 8 : 16);
       beep('hurt');
       if (p.hp <= 0) gameOver();
     }
@@ -2269,6 +2836,7 @@
       let damage = p.damage;
       let crit = Math.random() < p.critChance;
       if (p.examMode && p.attacksMade % 10 === 0) crit = true;
+      if (p.perfectScore && p.attacksMade % 7 === 0) crit = true;
       if (crit) damage *= 2;
 
       if (p.cleave) {
@@ -2361,7 +2929,12 @@
 
     function hitEnemy(e, damage, x, y, kx, ky, special) {
       const p = game.player;
-      const dmg = Math.max(1, Math.round(damage));
+      let dmg = Math.max(1, Math.round(damage));
+      if (e.armor > 0) {
+        e.armor -= 1;
+        dmg = Math.max(1, Math.ceil(dmg * 0.42));
+        addNumber(x, y - e.r - 8, 'ARMOR', '#b8f7ff');
+      }
       e.hp -= dmg;
       e.hurt = 0.13;
       const d = Math.max(1, Math.hypot(kx, ky));
@@ -2375,6 +2948,10 @@
     function dash() {
       const p = game.player;
       if (!p || p.dashCooldown > 0 || game.state !== STATES.PLAYING) return;
+      if (game.room && game.room.modifier && game.room.modifier.id === 'silence') {
+        showToast('Exam Silence: no dashing.');
+        return;
+      }
       let x = game.input.dirX || p.facingX || 1;
       let y = game.input.dirY || p.facingY || 0;
       const len = Math.max(1, Math.hypot(x, y));
@@ -2383,10 +2960,12 @@
       p.vx = x * p.dashPower;
       p.vy = y * p.dashPower;
       p.dashTime = 0.15;
-      p.dashCooldown = p.dashCooldownBase;
+      p.dashCooldown = p.dashCooldownBase * (hasStatus('blessing', 'dash') ? 0.72 : 1);
       p.invuln = Math.max(p.invuln, 0.14);
       addBurst(p.x, p.y, 12, '#32d5ff');
       addRing(p.x, p.y, 34, '#32d5ff', 0.22);
+      if (p.dashShockwave) shockwave();
+      haptic(10);
       beep('hit');
     }
 
@@ -2502,19 +3081,23 @@
         ['HP', Math.ceil(game.player.hp) + ' / ' + game.player.maxHp],
         ['Enemies', game.runStats.roomEnemies || 0]
       ];
-      const cards = game.choices.map((u, i) => `
+      const hideCard = hasStatus('curse', 'hidden') ? 0 : -1;
+      const cards = game.choices.map((u, i) => {
+        const hidden = i === hideCard;
+        return `
         <button class="upgrade-card ${u.rarity}" data-choice="${i}">
           <div class="card-top">
             <div>
-              <div class="rarity">${u.rarity}</div>
-              <h3>${escapeHtml(u.name)}</h3>
+              <div class="rarity">${hidden ? 'cursed' : u.rarity}</div>
+              <h3>${escapeHtml(hidden ? 'Face-Down Homework' : u.name)}</h3>
             </div>
-            <div class="icon">${escapeHtml(u.icon)}</div>
+            <div class="icon">${escapeHtml(hidden ? '?' : u.icon)}</div>
           </div>
-          <p class="card-desc">${escapeHtml(u.desc)}</p>
-          <div class="stat-preview">${escapeHtml(previewUpgrade(u))}</div>
+          <p class="card-desc">${escapeHtml(hidden ? 'The curse hides this card until you pick it.' : u.desc)}</p>
+          <div class="stat-preview">${escapeHtml(hidden ? 'Unknown' : previewUpgrade(u))}</div>
         </button>
-      `).join('');
+      `;
+      }).join('');
       showOverlay(`
         <section class="screen wide">
           <div class="screen-header">
@@ -2542,10 +3125,11 @@
       const available = upgrades.slice();
       const result = [];
       for (let i = 0; i < count && available.length; i++) {
+        const rareBoost = (hasStatus('blessing', 'bossLuck') ? 8 : 0) + (game.room && game.room.modifier && game.room.modifier.id === 'dark' ? 5 : 0);
         const rarity = weightedPick(rng, [
           { value: 'common', weight: Math.max(52, 72 - game.roomNumber * 0.12) },
-          { value: 'rare', weight: 24 + Math.min(10, game.roomNumber * 0.05) },
-          { value: 'legendary', weight: 4 + Math.min(7, game.roomNumber * 0.025) }
+          { value: 'rare', weight: 24 + Math.min(10, game.roomNumber * 0.05) + rareBoost },
+          { value: 'legendary', weight: 4 + Math.min(7, game.roomNumber * 0.025) + rareBoost * 0.35 }
         ]);
         let pool = available.filter(u => u.rarity === rarity);
         if (!pool.length) pool = available;
@@ -2593,17 +3177,126 @@
       u.apply(game);
       game.player.upgrades.push(u.id);
       game.runStats.upgradesCollected += 1;
+      checkSynergies();
       addBurst(game.player.x, game.player.y, 24, u.rarity === 'legendary' ? '#ffcf4a' : u.rarity === 'rare' ? '#8fc7ff' : '#dbeaff');
       showToast(u.name);
       beep('buy');
+      if (shouldOfferRouteChoice()) showRouteChoice(false);
+      else advanceRoom();
+    }
+
+    function checkSynergies() {
+      const p = game.player;
+      const has = id => p.upgrades.includes(id);
+      const rules = [
+        { id: 'geometryBeam', name: 'Geometry Beam', need: ['projectile', 'ruler'], apply: () => { p.projectileEnabled = true; p.projectilePierce = Math.max(p.projectilePierce, 2); } },
+        { id: 'untouchable', name: 'Untouchable', need: ['dodge', 'speed'], apply: () => { p.untouchable = true; p.dodgeChance = Math.min(0.5, p.dodgeChance + 0.04); } },
+        { id: 'richAura', name: 'Rich Kid Aura', need: ['goldPack', 'magnet'], apply: () => { p.richAura = true; } },
+        { id: 'tankMode', name: 'Tank Mode', need: ['meat', 'hp'], apply: () => { p.blockShockwave = true; p.blockStrength = Math.min(0.72, p.blockStrength + 0.08); } },
+        { id: 'hyperBell', name: 'Hyper Bell', need: ['dash', 'bell'], apply: () => { p.dashShockwave = true; } },
+        { id: 'perfectScore', name: 'Perfect Score', need: ['examMode', 'cheat'], apply: () => { p.perfectScore = true; } }
+      ];
+      for (const rule of rules) {
+        if (p.synergies.includes(rule.id)) continue;
+        if (rule.need.every(has)) unlockSynergy(rule);
+      }
+    }
+
+    function unlockSynergy(rule) {
+      const p = game.player;
+      p.synergies.push(rule.id);
+      if (!game.save.permanent.synergiesUnlocked.includes(rule.id)) game.save.permanent.synergiesUnlocked.push(rule.id);
+      rule.apply();
+      addBurst(p.x, p.y, 34, '#ffd45d');
+      addRing(p.x, p.y, 78, '#ffd45d', 0.65);
+      addScore(700, 1);
+      showToast('Synergy unlocked: ' + rule.name);
+      haptic(18);
+    }
+
+    function shouldOfferRouteChoice() {
+      if (game.roomNumber < 3) return false;
+      if (game.room && game.room.type === 'boss') return true;
+      return game.roomNumber % 2 === 0 || game.runMode === 'chaos';
+    }
+
+    function showRouteChoice(resume) {
+      setState(STATES.ROUTE_CHOICE);
+      if (!resume || !game.routeChoices.length) game.routeChoices = generateRouteChoices();
+      saveGame();
+      const cards = game.routeChoices.map((r, i) => `
+        <button class="upgrade-card ${r.rarity || 'rare'}" data-route="${i}">
+          <div class="card-top">
+            <div>
+              <div class="rarity">${escapeHtml(r.tag)}</div>
+              <h3>${escapeHtml(r.name)}</h3>
+            </div>
+            <div class="icon">${escapeHtml(r.icon)}</div>
+          </div>
+          <p class="card-desc">${escapeHtml(r.desc)}</p>
+          <div class="stat-preview">${escapeHtml(r.preview)}</div>
+        </button>
+      `).join('');
+      showOverlay(`
+        <section class="screen wide">
+          <div class="screen-header">
+            <div>
+              <h2>Choose the next hallway</h2>
+              <p class="muted">Safe progress, greedy rewards, or weird backpack logic.</p>
+            </div>
+          </div>
+          <div class="card-grid three">${cards}</div>
+        </section>
+      `);
+      overlay.querySelectorAll('[data-route]').forEach(btn => btn.addEventListener('click', () => chooseRoute(Number(btn.dataset.route))));
+    }
+
+    function generateRouteChoices() {
+      const rng = mulberry32((game.runSeed + game.roomNumber * 4241 + game.player.score) >>> 0);
+      const lowHp = game.player.hp / game.player.maxHp < 0.35;
+      const pool = [
+        { id: 'safe', tag: 'safe', name: 'Safe Door', icon: '>', desc: 'A normal room with steady rewards.', preview: 'Normal risk', forceType: 'normal', rewardMult: 1, rarity: 'common' },
+        { id: 'greedy', tag: 'greedy', name: 'Greedy Door', icon: '$', desc: 'Harder enemies, richer drops.', preview: '+60% rewards', forceType: 'chaos', hard: true, rewardMult: 1.6, rarity: 'rare' },
+        { id: 'mystery', tag: 'mystery', name: 'Mystery Door', icon: '?', desc: 'Unknown event, better prizes.', preview: 'Random event', hard: chance(rng, 0.5), rewardMult: 1.35, modifier: pick(rng, roomModifiers).id, rarity: 'rare' },
+        { id: 'cursed', tag: 'cursed', name: 'Cursed Door', icon: '!', desc: 'Gain a blessing now, carry a curse.', preview: 'Blessing + curse', hard: true, rewardMult: 1.75, curse: pick(rng, ['haste', 'frail', 'traps', 'hidden']), blessing: pick(rng, ['coins', 'shield', 'dash']), rarity: 'legendary' },
+        { id: 'boss', tag: 'boss', name: 'Detention Door', icon: 'B', desc: 'Optional mini-boss pressure for a big reward.', preview: '+100% rewards', forceType: 'boss', hard: true, rewardMult: 2, rarity: 'legendary' },
+        { id: 'shop', tag: 'shop', name: 'Desk Shop', icon: '+', desc: 'Spend coins before more trouble.', preview: 'Shop room', forceType: 'shop', rewardMult: 1, rarity: 'common' }
+      ];
+      if (lowHp) pool.push({ id: 'nurse', tag: 'rest', name: 'Nurse Office', icon: 'HP', desc: 'Heal now, then face a normal room.', preview: 'Heal 30%', forceType: 'normal', heal: 0.3, rewardMult: 0.85, rarity: 'common' });
+      const result = [pool[0]];
+      while (result.length < 3 && pool.length) {
+        const pickIndex = pool.length > 1 ? randInt(rng, 1, pool.length - 1) : 0;
+        const candidate = pool.splice(pickIndex, 1)[0];
+        if (candidate && !result.some(r => r.id === candidate.id)) result.push(candidate);
+      }
+      return result;
+    }
+
+    function chooseRoute(index) {
+      const route = game.routeChoices[index];
+      if (!route) return;
+      if (route.heal) game.player.hp = Math.min(game.player.maxHp, game.player.hp + Math.ceil(game.player.maxHp * route.heal));
+      if (route.blessing) addStatus('blessing', route.blessing, route.name + ' Blessing', 3, route.desc);
+      if (route.curse) addStatus('curse', route.curse, route.name + ' Curse', 3, route.desc);
+      if (route.id === 'cursed') {
+        const u = pick(mulberry32((game.runSeed ^ game.roomNumber * 33) >>> 0), upgrades.filter(u => u.rarity !== 'common'));
+        u.apply(game);
+        game.player.upgrades.push(u.id);
+        showToast('Cursed prize: ' + u.name);
+        checkSynergies();
+      }
+      game.nextRoute = route;
+      game.routeChoices = [];
       advanceRoom();
     }
 
     function advanceRoom() {
+      tickStatuses();
       game.roomNumber += 1;
       game.save.permanent.bestRoom = Math.max(game.save.permanent.bestRoom, game.roomNumber);
       if (game.player.goldenBackpack) game.player.coinMultiplier = Math.min(3.5, game.player.coinMultiplier + 0.015);
       generateCurrentRoom();
+      game.nextRoute = null;
       saveGame();
       checkUnlocks();
       setState(STATES.PLAYING);
@@ -2658,7 +3351,10 @@
         { kind: 'heal', name: 'Cafeteria Snack', icon: '●', desc: 'Heal 18 HP.', cost: base, apply: () => { game.player.hp = Math.min(game.player.maxHp, game.player.hp + 18); } },
         { kind: 'stat', name: 'Sturdy Folder', icon: '▣', desc: '+4 max HP and heal 4.', cost: base + 4, apply: () => { game.player.maxHp += 4; game.player.hp += 4; } },
         { kind: 'stat', name: 'Fresh Pencil Tip', icon: '✎', desc: '+1 attack damage.', cost: base + 7, apply: () => { game.player.damage += 1; } },
-        { kind: 'upgrade', name: 'Mystery Pocket', icon: '?', desc: 'Gain a random upgrade now.', cost: base + 12, apply: () => { const u = pick(rng, generateUpgradeChoices(3)); u.apply(game); game.player.upgrades.push(u.id); game.runStats.upgradesCollected += 1; showToast('Bought ' + u.name); } },
+        { kind: 'upgrade', name: 'Mystery Pocket', icon: '?', desc: 'Gain a random upgrade now.', cost: base + 12, apply: () => { const u = pick(rng, generateUpgradeChoices(3)); u.apply(game); game.player.upgrades.push(u.id); game.runStats.upgradesCollected += 1; checkSynergies(); showToast('Bought ' + u.name); } },
+        { kind: 'blessing', name: 'Locker Luck', icon: '+', desc: 'Coin blessing for 3 rooms.', cost: base + 8, apply: () => { addStatus('blessing', 'coins', 'Locker Luck', 3, 'More coin drops.'); } },
+        { kind: 'cleanse', name: 'Guidance Counselor', icon: 'X', desc: 'Remove one curse.', cost: base + 9, apply: () => { if (game.player.curses.length) game.player.curses.shift(); else game.player.hp = Math.min(game.player.maxHp, game.player.hp + 8); } },
+        { kind: 'gamble', name: 'Vending Machine', icon: '$', desc: 'Random snack, curse, or prize.', cost: base + 6, apply: () => { if (rng() < 0.56) { game.player.coins += base + 10; showToast('Vending jackpot.'); } else if (rng() < 0.82) addStatus('blessing', 'shield', 'Foil Wrapper Shield', 2, 'Blocks first hit.'); else addStatus('curse', 'hidden', 'Stuck Snack Coil', 2, 'One upgrade is hidden.'); } },
         { kind: 'route', name: 'Hall Monitor Tip', icon: '!', desc: 'Weaken the next boss.', cost: base + 10, apply: () => { game.player.bossWeakens += 1; } }
       ];
       const result = [];
@@ -2676,6 +3372,7 @@
       offer.bought = true;
       offer.apply();
       beep('buy');
+      haptic(10);
       saveGame();
       showShop();
     }
@@ -2683,8 +3380,12 @@
     function gameOver() {
       const reached = game.roomNumber;
       game.save.permanent.bestRoom = Math.max(game.save.permanent.bestRoom, reached);
+      game.save.permanent.bestScore = Math.max(game.save.permanent.bestScore, game.player ? game.player.score : 0);
+      game.save.permanent.bestCombo = Math.max(game.save.permanent.bestCombo, game.player ? game.player.bestCombo : 0);
+      recordModeBest(reached);
       game.save.permanent.totalDeaths += 1;
       checkUnlocks();
+      checkAchievements();
       const stats = Object.assign({}, game.runStats);
       clearActiveRun();
       setState(STATES.GAME_OVER);
@@ -2696,6 +3397,8 @@
           </div>
           <div class="summary-grid">
             ${statTile('Best room', game.save.permanent.bestRoom, true)}
+            ${statTile('Score', game.player ? game.player.score : stats.score, true)}
+            ${statTile('Best combo', game.player ? game.player.bestCombo : stats.bestCombo, true)}
             ${statTile('Coins', stats.coinsCollected, true)}
             ${statTile('Enemies', stats.enemiesDefeated, true)}
             ${statTile('Bosses', stats.bossesDefeated, true)}
@@ -2738,6 +3441,24 @@
       requestAnimationFrame(tick);
     }
 
+    function recordModeBest(roomReached) {
+      const score = game.player ? game.player.score : 0;
+      const mode = game.runMode || 'normal';
+      const best = game.save.permanent.modeBests[mode] || { room: 0, score: 0 };
+      game.save.permanent.modeBests[mode] = {
+        room: Math.max(best.room || 0, roomReached),
+        score: Math.max(best.score || 0, score)
+      };
+      if (mode === 'daily') {
+        const key = game.dailyKey || todayKey();
+        const daily = game.save.permanent.daily[key] || { room: 0, score: 0 };
+        game.save.permanent.daily[key] = {
+          room: Math.max(daily.room || 0, roomReached),
+          score: Math.max(daily.score || 0, score)
+        };
+      }
+    }
+
     function checkUnlocks() {
       const p = game.save.permanent;
       const unlocks = [
@@ -2754,6 +3475,19 @@
           changed = true;
           const skin = skins.find(s => s.id === id);
           showToast('Skin unlocked: ' + skin.name);
+        }
+      }
+      if (changed) saveGame();
+    }
+
+    function checkAchievements() {
+      const p = game.save.permanent;
+      let changed = false;
+      for (const a of achievements) {
+        if (!p.achievements.includes(a.id) && a.test()) {
+          p.achievements.push(a.id);
+          changed = true;
+          showToast('Achievement: ' + a.name);
         }
       }
       if (changed) saveGame();
@@ -2962,6 +3696,9 @@
         drawRoom();
         drawPuddles();
         drawTraps();
+        drawTelegraphs();
+        drawPatrol();
+        drawNotes();
         drawCoins();
         drawProjectiles();
         drawEffects();
@@ -3058,6 +3795,7 @@
       ctx.stroke();
 
       for (const ob of game.room.obstacles) drawObstacle(ob);
+      drawExitGuide();
       drawExit();
       ctx.restore();
     }
@@ -3176,6 +3914,36 @@
       ctx.restore();
     }
 
+    function drawExitGuide() {
+      if (!game.room.cleared) return;
+      const b = game.bounds;
+      const ex = game.room.exit;
+      const theme = currentTheme();
+      const pulse = 0.55 + Math.sin(performance.now() * 0.006) * 0.18;
+      const midX = (b.left + b.right) / 2;
+      const midY = (b.top + b.bottom) / 2;
+      ctx.save();
+      ctx.globalAlpha = 0.48 + pulse * 0.26;
+      ctx.strokeStyle = hexToRgba(theme.accent, 0.62);
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.setLineDash([10, 10]);
+      ctx.lineDashOffset = -performance.now() * 0.018;
+      ctx.beginPath();
+      ctx.moveTo(midX, midY);
+      ctx.quadraticCurveTo(midX + (ex.x - midX) * 0.52, ex.y, ex.x - 8, ex.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = hexToRgba(theme.accent, 0.72);
+      ctx.beginPath();
+      ctx.moveTo(ex.x - 8, ex.y);
+      ctx.lineTo(ex.x - 28, ex.y - 10);
+      ctx.lineTo(ex.x - 28, ex.y + 10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
     function drawExit() {
       const ex = game.room.exit;
       const open = game.room.cleared;
@@ -3210,11 +3978,38 @@
         ctx.shadowBlur = 8;
         ctx.fillText('ENTER', ex.w * 0.5, -8);
         ctx.shadowBlur = 0;
+        drawDoorPreview(ex, theme);
       } else {
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
         roundRect(ctx, 8, 12, 10, ex.h - 24, 5);
         ctx.fill();
       }
+      ctx.restore();
+    }
+
+    function drawDoorPreview(ex, theme) {
+      const b = game.bounds;
+      const text = game.room.nextPreview || 'Next Room';
+      const w = Math.min(212, Math.max(138, b.right - b.left - 108));
+      const x = clamp(-w - 18, b.left - ex.x + 12, b.right - ex.x - w - 46);
+      const y = clamp(ex.h / 2 - 58, b.top - ex.y + 14, b.bottom - ex.y - 72);
+      ctx.save();
+      ctx.shadowColor = hexToRgba(theme.accent, 0.35);
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = 'rgba(7,14,26,0.76)';
+      ctx.strokeStyle = hexToRgba(theme.accent, 0.34);
+      ctx.lineWidth = 1;
+      roundRect(ctx, x, y, w, 58, 14);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.stroke();
+      ctx.fillStyle = hexToRgba(theme.accent2 || theme.accent, 0.82);
+      ctx.font = '800 10px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('NEXT ROOM', x + 12, y + 19);
+      ctx.fillStyle = '#f5fbff';
+      ctx.font = '800 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(fitCanvasText(text, w - 24), x + 12, y + 39);
       ctx.restore();
     }
 
@@ -3276,6 +4071,96 @@
         } else {
           drawPaperPlane(t.x, t.y, Math.atan2(t.vy, t.vx), '#f8fbff', 0.72);
         }
+      }
+    }
+
+    function drawTelegraphs() {
+      for (const e of game.room.enemies) {
+        const t = e.telegraph;
+        if (!t) continue;
+        const pct = clamp(1 - t.time / t.maxTime, 0, 1);
+        const alpha = 0.28 + pct * 0.48;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = t.color;
+        ctx.fillStyle = t.color;
+        ctx.lineCap = 'round';
+        ctx.shadowColor = t.color;
+        ctx.shadowBlur = 12 + pct * 18;
+        if (t.type === 'chalkRing') {
+          const r = 34 + pct * 86;
+          ctx.lineWidth = 3 + pct * 4;
+          ctx.beginPath();
+          ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+          for (let i = 0; i < t.spread; i++) {
+            const a = t.angle + i / t.spread * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(e.x + Math.cos(a) * 18, e.y + Math.sin(a) * 18);
+            ctx.lineTo(e.x + Math.cos(a) * r, e.y + Math.sin(a) * r);
+            ctx.stroke();
+          }
+        } else {
+          const shots = Math.max(1, t.spread || 1);
+          const len = Math.max(game.bounds.right - game.bounds.left, game.bounds.bottom - game.bounds.top);
+          ctx.lineWidth = 2 + pct * 4;
+          for (let i = 0; i < shots; i++) {
+            const a = t.angle + (i - (shots - 1) / 2) * 0.25;
+            ctx.beginPath();
+            ctx.moveTo(e.x, e.y);
+            ctx.lineTo(e.x + Math.cos(a) * len, e.y + Math.sin(a) * len);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawPatrol() {
+      const p = game.room && game.room.patrol;
+      if (!p) return;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.globalAlpha = 0.52;
+      ctx.shadowColor = 'rgba(255,77,109,0.55)';
+      ctx.shadowBlur = 24;
+      ctx.fillStyle = 'rgba(255,77,109,0.18)';
+      roundRect(ctx, -p.w / 2, -p.h / 2, p.w, p.h, 28);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,210,93,0.72)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = '#ffec99';
+      ctx.font = '900 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('PATROL', 0, -p.h / 2 - 8);
+      ctx.restore();
+    }
+
+    function drawNotes() {
+      if (!game.room.notes) return;
+      for (const note of game.room.notes) {
+        if (note.collected) continue;
+        const pulse = 1 + Math.sin(note.pulse) * 0.12;
+        ctx.save();
+        ctx.translate(note.x, note.y);
+        ctx.scale(pulse, pulse);
+        ctx.shadowColor = 'rgba(215,242,255,0.72)';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#d7f2ff';
+        roundRect(ctx, -8, -10, 16, 20, 4);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = 'rgba(18,35,56,0.45)';
+        ctx.beginPath();
+        ctx.moveTo(-4, -4);
+        ctx.lineTo(5, -4);
+        ctx.moveTo(-4, 2);
+        ctx.lineTo(4, 2);
+        ctx.moveTo(-4, 8);
+        ctx.lineTo(2, 8);
+        ctx.stroke();
+        ctx.restore();
       }
     }
 
@@ -3358,7 +4243,9 @@
         else if (e.type === 'bot') drawEnemyBot(e, flash);
         else if (e.type === 'slime') drawEnemySlime(e, flash);
         else if (e.type === 'glue') drawEnemyGlue(e, flash);
+        else if (e.type === 'monitor') drawEnemyTeacher(e, flash);
         else drawEnemyRat(e, flash);
+        if (e.variant) drawVariantBadge(e);
         if (!e.boss) {
           ctx.fillStyle = 'rgba(0,0,0,0.44)';
           roundRect(ctx, -e.r, -e.r - 14, e.r * 2, 5, 3);
@@ -3397,6 +4284,23 @@
       ctx.moveTo(-e.r * 0.75, e.r * 0.35);
       ctx.quadraticCurveTo(-e.r * 1.25, e.r * 0.45, -e.r * 1.45, e.r * 0.1);
       ctx.stroke();
+    }
+
+    function drawVariantBadge(e) {
+      ctx.save();
+      ctx.strokeStyle = e.variant === 'golden' ? '#ffd94c' : e.variant === 'glitch' ? '#58f0e0' : e.variant === 'fire' ? '#ff8a42' : '#f5fbff';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.82;
+      ctx.beginPath();
+      ctx.arc(0, 0, e.r + 5 + Math.sin(performance.now() * 0.008 + e.x) * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      if (e.armor > 0) {
+        ctx.fillStyle = '#b8f7ff';
+        ctx.font = '900 10px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('ARM', 0, -e.r - 20);
+      }
+      ctx.restore();
     }
 
     function drawEnemySlime(e, flash) {
@@ -3759,6 +4663,14 @@
       c.closePath();
     }
 
+    function fitCanvasText(text, maxWidth) {
+      text = String(text);
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let end = text.length;
+      while (end > 4 && ctx.measureText(text.slice(0, end) + '...').width > maxWidth) end -= 1;
+      return text.slice(0, Math.max(1, end)).trimEnd() + '...';
+    }
+
     function hexToRgba(hex, alpha) {
       const clean = hex.replace('#', '');
       const num = parseInt(clean, 16);
@@ -3780,13 +4692,15 @@
       if (Math.abs(game.view.hpShown - hpTarget) < 0.003) game.view.hpShown = hpTarget;
       hudEls.hpFill.style.width = clamp(game.view.hpShown * 100, 0, 100) + '%';
       const modText = game.room.cleared && game.room.exit.open ? 'Door Open • Next: ' + game.room.nextPreview : game.room.modifier ? game.room.modifier.name : capitalize(game.room.type) + ' Room';
-      hudEls.mod.textContent = game.quizTimer > 0 ? modText + ' ' + Math.ceil(game.quizTimer) + 's' : modText;
+      const objectiveText = game.room.objective && !game.room.cleared ? ' - ' + game.room.objective.name : '';
+      const comboText = p.combo >= 2 ? ' - Combo x' + p.combo : '';
+      hudEls.mod.textContent = (game.quizTimer > 0 ? modText + ' ' + Math.ceil(game.quizTimer) + 's' : modText) + objectiveText + comboText;
 
       const boss = game.room.enemies.find(e => e.boss);
       if (boss) {
         const pct = clamp(boss.hp / boss.maxHp, 0, 1);
         hudEls.bossWrap.style.display = 'block';
-        hudEls.bossName.textContent = boss.phase === 2 ? 'Angry Teacher: Phase 2' : 'Angry Teacher';
+        hudEls.bossName.textContent = boss.phase === 2 ? boss.name + ': Phase 2' : boss.name;
         hudEls.bossHp.textContent = Math.ceil(pct * 100) + '%';
         hudEls.bossFill.style.width = pct * 100 + '%';
       } else {
@@ -3799,7 +4713,8 @@
         dashRing.style.background = `conic-gradient(${ready ? '#32d5ff' : '#31516b'} ${pct}%, rgba(255,255,255,0.12) 0)`;
         dashRing.querySelector('span').textContent = ready ? 'DASH' : Math.ceil(p.dashCooldown * 10) / 10 + 's';
         const shootReady = p.shootCooldown <= 0;
-        shootBtn.disabled = !shootReady;
+        shootBtn.classList.toggle('cooling', !shootReady);
+        shootBtn.setAttribute('aria-disabled', shootReady ? 'false' : 'true');
         shootBtn.querySelector('span').textContent = shootReady ? 'SHOOT' : Math.ceil(p.shootCooldown * 10) / 10 + 's';
       }
     }
@@ -3818,8 +4733,21 @@
         if (game.state !== STATES.PLAYING) return;
         e.preventDefault();
         startAudio();
+        game.input.shooting = true;
+        game.input.shootPointerId = e.pointerId;
+        if (shootBtn.setPointerCapture) {
+          try { shootBtn.setPointerCapture(e.pointerId); } catch (err) {}
+        }
         shootPlayerProjectile();
       }, { passive: false });
+      const stopShooting = e => {
+        if (e && game.input.shootPointerId !== null && e.pointerId !== game.input.shootPointerId) return;
+        game.input.shooting = false;
+        game.input.shootPointerId = null;
+      };
+      shootBtn.addEventListener('pointerup', stopShooting, { passive: false });
+      shootBtn.addEventListener('pointercancel', stopShooting, { passive: false });
+      shootBtn.addEventListener('lostpointercapture', stopShooting);
       window.addEventListener('keydown', e => {
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Spacebar'].includes(e.key)) e.preventDefault();
         if (e.key === 'Escape') {
@@ -3833,7 +4761,10 @@
           const target = nearestEnemyInRange(game.player.attackRange + 18);
           if (target) performAttack(target);
         }
-        if (game.state === STATES.PLAYING && (key === 'f' || key === 'e') && !e.repeat) shootPlayerProjectile();
+        if (game.state === STATES.PLAYING && (key === 'f' || key === 'e')) {
+          game.input.shootKey = true;
+          if (!e.repeat) shootPlayerProjectile();
+        }
         if (game.state === STATES.PLAYING && (key === 'Shift' || key === 'shift') && !e.repeat) dash();
         if (key === 'b') game.input.block = true;
       }, { passive: false });
@@ -3841,6 +4772,7 @@
       window.addEventListener('keyup', e => {
         const key = e.key === ' ' || e.key === 'Spacebar' ? 'space' : e.key.length === 1 ? e.key.toLowerCase() : e.key;
         game.input.keys[key] = false;
+        if (key === 'f' || key === 'e') game.input.shootKey = false;
         if (key === 'b') game.input.block = false;
       });
 
@@ -3889,6 +4821,9 @@
         game.input.keys = Object.create(null);
         game.input.touchDirX = 0;
         game.input.touchDirY = 0;
+        game.input.shooting = false;
+        game.input.shootPointerId = null;
+        game.input.shootKey = false;
         game.input.block = false;
         if (game.state === STATES.PLAYING) saveGame();
       });
